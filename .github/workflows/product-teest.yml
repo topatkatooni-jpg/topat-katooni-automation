@@ -22,7 +22,7 @@ jobs:
           import urllib.parse
           import urllib.error
           import xml.etree.ElementTree as ET
-          from decimal import Decimal, InvalidOperation
+          from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
           BASE = "https://topatkatooni.ir"
           SITEMAP = BASE + "/product-sitemap.xml"
@@ -34,7 +34,13 @@ jobs:
 
           def fetch(url, timeout=30):
               req = urllib.request.Request(
-                  url, headers={"User-Agent": "Mozilla/5.0"}
+                  url,
+                  headers={
+                      "User-Agent": (
+                          "Mozilla/5.0 (X11; Linux x86_64) "
+                          "AppleWebKit/537.36 Chrome/130 Safari/537.36"
+                      )
+                  }
               )
               with urllib.request.urlopen(req, timeout=timeout) as response:
                   return response.read(), response.headers
@@ -42,6 +48,73 @@ jobs:
           def fetch_text(url):
               data, _ = fetch(url)
               return data.decode("utf-8", errors="replace")
+
+          def clean_text(value):
+              if not value:
+                  return ""
+              value = html.unescape(str(value))
+              value = re.sub(r"<(script|style)\b.*?</\1>", " ", value,
+                             flags=re.I | re.S)
+              value = re.sub(r"<[^>]+>", " ", value)
+              value = re.sub(r"\s+", " ", value)
+              return value.strip()
+
+          def get_meta(page_html, prop):
+              patterns = [
+                  r'<meta[^>]+(?:property|name)=["\']'
+                  + re.escape(prop)
+                  + r'["\'][^>]+content=["\']([^"\']*)',
+
+                  r'<meta[^>]+content=["\']([^"\']*)["\'][^>]+'
+                  r'(?:property|name)=["\']'
+                  + re.escape(prop)
+                  + r'["\']'
+              ]
+
+              for pattern in patterns:
+                  match = re.search(pattern, page_html, re.I | re.S)
+                  if match:
+                      return html.unescape(match.group(1)).strip()
+
+              return None
+
+          def find_products(obj):
+              if isinstance(obj, dict):
+                  typ = obj.get("@type", [])
+                  if isinstance(typ, str):
+                      typ = [typ]
+
+                  if "Product" in typ:
+                      yield obj
+
+                  for value in obj.values():
+                      yield from find_products(value)
+
+              elif isinstance(obj, list):
+                  for value in obj:
+                      yield from find_products(value)
+
+          JSON_LD_PATTERN = (
+              r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>'
+              r'(.*?)</script>'
+          )
+
+          def extract_product_schema(page_html):
+              found = []
+
+              for match in re.finditer(
+                  JSON_LD_PATTERN, page_html, re.I | re.S
+              ):
+                  try:
+                      data = json.loads(match.group(1))
+                      found.extend(find_products(data))
+                  except (json.JSONDecodeError, TypeError):
+                      continue
+
+              return found
+
+          def is_product_page(page_html):
+              return bool(extract_product_schema(page_html))
 
           print("Step 1: Reading product sitemap.")
           root = ET.fromstring(fetch_text(SITEMAP))
@@ -53,7 +126,6 @@ jobs:
               if node.text
           ]
 
-          # Support sitemap indexes containing child sitemaps.
           child_maps = [
               node.text.strip()
               for node in root.findall(".//sm:sitemap/sm:loc", ns)
@@ -71,10 +143,13 @@ jobs:
           product_urls = list(dict.fromkeys(product_urls))
           site_host = urllib.parse.urlparse(BASE).netloc.lower()
 
-          # Exclude archives, shop, cart, checkout and account pages.
           excluded_paths = {
-              "/shop", "/cart", "/checkout", "/my-account"
+              "/shop",
+              "/cart",
+              "/checkout",
+              "/my-account",
           }
+
           excluded_markers = (
               "/product-category/",
               "/product-tag/",
@@ -84,60 +159,37 @@ jobs:
           )
 
           candidates = []
+
           for url in product_urls:
               parsed = urllib.parse.urlparse(url)
               path = parsed.path.lower().rstrip("/") or "/"
 
+              if parsed.scheme not in ("http", "https"):
+                  continue
+
               if parsed.netloc.lower() != site_host:
                   continue
+
               if path in excluded_paths:
                   continue
+
               if any(marker in path + "/" for marker in excluded_markers):
                   continue
 
               candidates.append(url)
 
+          print("Sitemap URLs:", len(product_urls))
           print("Candidate URLs after archive filtering:", len(candidates))
 
           if not candidates:
               raise SystemExit("ERROR: No candidate URLs found in sitemap.")
 
-          def find_products(obj):
-              if isinstance(obj, dict):
-                  typ = obj.get("@type", [])
-                  if isinstance(typ, str):
-                      typ = [typ]
-                  if "Product" in typ:
-                      yield obj
-                  for value in obj.values():
-                      yield from find_products(value)
-              elif isinstance(obj, list):
-                  for value in obj:
-                      yield from find_products(value)
-
-          json_ld_pattern = (
-              r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>'
-              r'(.*?)</script>'
-          )
-
-          def extract_product_schema(page_html):
-              products = []
-              for match in re.finditer(
-                  json_ld_pattern, page_html, re.I | re.S
-              ):
-                  try:
-                      products.extend(
-                          find_products(json.loads(match.group(1)))
-                      )
-                  except (json.JSONDecodeError, TypeError):
-                      continue
-              return products
-
-          # Verify candidate pages and select the first real Product page.
           product_url = None
           page = None
           products = []
 
+          # Check candidates until a real Product page is found.
+          # The limit prevents an excessively long test run.
           for candidate in candidates[:30]:
               try:
                   candidate_page = fetch_text(candidate)
@@ -159,137 +211,385 @@ jobs:
 
           if not product_url:
               raise SystemExit(
-                  "ERROR: No verified Product page found in first 30 candidates."
+                  "ERROR: No Product page found in the first 30 candidates."
               )
 
           print("Verified product URL:", product_url)
           print("Step 2: Extracting product details.")
 
-          def get_meta(prop):
-              patterns = [
-                  r'<meta[^>]+property=["\']' + re.escape(prop) +
-                  r'["\'][^>]+content=["\']([^"\']*)',
-                  r'<meta[^>]+content=["\']([^"\']*)' +
-                  r'["\'][^>]+property=["\']' + re.escape(prop) + r'["\']',
-                  r'<meta[^>]+name=["\']' + re.escape(prop) +
-                  r'["\'][^>]+content=["\']([^"\']*)',
-              ]
-              for pattern in patterns:
-                  match = re.search(pattern, page, re.I)
-                  if match:
-                      return html.unescape(match.group(1)).strip()
-              return None
+          product = products[0]
 
-          product = products[0] if products else {}
-
-          title = (
+          title = clean_text(
               product.get("name")
-              or get_meta("og:title")
+              or get_meta(page, "og:title")
               or "محصول توپات کتونی"
           )
 
-          description = (
+          description = clean_text(
               product.get("description")
-              or get_meta("og:description")
+              or get_meta(page, "og:description")
               or "برای مشاهده مشخصات کامل به صفحه محصول مراجعه کنید."
           )
-          description = re.sub(r"<[^>]+>", "", html.unescape(description))
+
+          # Keep the original product description, with readable spacing.
           description = re.sub(r"\s+", " ", description).strip()
 
-          image = product.get("image") or get_meta("og:image")
-          if isinstance(image, list):
-              image = image[0] if image else None
-          if isinstance(image, dict):
-              image = image.get("url") or image.get("contentUrl")
-          if image:
-              image = urllib.parse.urljoin(product_url, image)
+          # Convert possible schema image values to absolute URLs.
+          def image_values(value):
+              if isinstance(value, str):
+                  return [value]
+              if isinstance(value, list):
+                  result = []
+                  for item in value:
+                      result.extend(image_values(item))
+                  return result
+              if isinstance(value, dict):
+                  result = []
+                  for key in ("url", "contentUrl", "@id"):
+                      if value.get(key):
+                          result.extend(image_values(value[key]))
+                  return result
+              return []
 
-          offers = product.get("offers", {})
-          if isinstance(offers, list):
-              offers = offers[0] if offers else {}
-          if isinstance(offers, dict) and isinstance(offers.get("offers"), list):
-              offers = offers["offers"][0] if offers["offers"] else {}
+          def normalize_image_url(url):
+              url = html.unescape(url.strip())
+              url = urllib.parse.urljoin(product_url, url)
 
-          raw_price = offers.get("price") if isinstance(offers, dict) else None
-          currency = (
-              offers.get("priceCurrency", "")
-              if isinstance(offers, dict) else ""
+              parsed = urllib.parse.urlparse(url)
+
+              # WordPress commonly creates resized files such as
+              # product-300x300.jpg. Try the original filename instead.
+              path = re.sub(
+                  r"-\d{2,4}x\d{2,4}(?=\.(?:jpe?g|png|webp|avif)$)",
+                  "",
+                  parsed.path,
+                  flags=re.I
+              )
+
+              return urllib.parse.urlunparse(
+                  parsed._replace(path=path)
+              )
+
+          # Collect image URLs from structured product data and metadata.
+          image_candidates = []
+
+          for item in image_values(product.get("image")):
+              image_candidates.append((100, normalize_image_url(item)))
+
+          og_image = get_meta(page, "og:image")
+          if og_image:
+              image_candidates.append(
+                  (95, normalize_image_url(og_image))
+              )
+
+          # Prefer product gallery images, especially large/original sources.
+          gallery_pattern = (
+              r'<(?:img|source)\b[^>]*'
+              r'(?:class=["\'][^"\']*(?:wp-post-image|attachment-woocommerce_thumbnail|'
+              r'woocommerce-product-gallery__image)[^"\']*["\'][^>]*|'
+              r'data-large_image=["\'][^"\']*["\'][^>]*)[^>]*>'
           )
 
+          def attr(tag, name):
+              match = re.search(
+                  r'\b' + re.escape(name) + r'\s*=\s*["\']([^"\']+)["\']',
+                  tag,
+                  re.I | re.S
+              )
+              return match.group(1).strip() if match else None
+
+          # Search product gallery markup for full-size image attributes.
+          gallery_start = re.search(
+              r'<div[^>]+class=["\'][^"\']*woocommerce-product-gallery'
+              r'[^"\']*["\'][^>]*>',
+              page,
+              re.I
+          )
+
+          gallery_html = page
+          if gallery_start:
+              gallery_html = page[gallery_start.start():]
+
+          gallery_html = gallery_html[:150000]
+
+          image_tag_pattern = r'<(?:img|source)\b[^>]*>'
+
+          for tag in re.findall(image_tag_pattern, gallery_html, re.I | re.S):
+              classes = (attr(tag, "class") or "").lower()
+
+              large = (
+                  attr(tag, "data-large_image")
+                  or attr(tag, "data-src")
+                  or attr(tag, "data-original")
+              )
+
+              srcset = attr(tag, "srcset") or attr(tag, "data-srcset")
+              src = attr(tag, "src")
+
+              in_gallery = (
+                  "woocommerce-product-gallery" in classes
+                  or "wp-post-image" in classes
+                  or bool(large)
+              )
+
+              if srcset:
+                  entries = []
+                  for entry in srcset.split(","):
+                      bits = entry.strip().split()
+                      if not bits:
+                          continue
+
+                      candidate_url = bits[0]
+                      width_match = re.search(
+                          r"(\d+)w$", bits[1] if len(bits) > 1 else ""
+                      )
+                      width = int(width_match.group(1)) if width_match else 0
+                      entries.append((width, candidate_url))
+
+                  if entries:
+                      entries.sort(reverse=True)
+                      width, best_url = entries[0]
+                      score = 120 + min(width, 5000) // 100
+                      if in_gallery:
+                          score += 30
+                      image_candidates.append(
+                          (score, normalize_image_url(best_url))
+                      )
+
+              if large:
+                  image_candidates.append(
+                      (
+                          170 if in_gallery else 130,
+                          normalize_image_url(large)
+                      )
+                  )
+
+              if src:
+                  score = 150 if in_gallery else 50
+                  size_match = re.search(
+                      r"-(\d{2,4})x(\d{2,4})(?=\.)", src
+                  )
+                  if size_match:
+                      score -= 40
+                  image_candidates.append(
+                      (score, normalize_image_url(src))
+                  )
+
+          # De-duplicate candidates, keeping the highest score per URL.
+          scored_images = {}
+          for score, url in image_candidates:
+              parsed = urllib.parse.urlparse(url)
+              if (
+                  parsed.scheme in ("http", "https")
+                  and parsed.netloc
+                  and re.search(r"\.(jpe?g|png|webp|avif)(?:$|\?)",
+                                parsed.path, re.I)
+              ):
+                  scored_images[url] = max(
+                      score, scored_images.get(url, -1)
+                  )
+
+          ranked_images = sorted(
+              scored_images.items(),
+              key=lambda item: item[1],
+              reverse=True
+          )
+
+          image = ranked_images[0][0] if ranked_images else None
+
+          # If the original filename does not work, try the next image.
+          # Do not resize or recompress downloaded image bytes.
+          image_bytes = None
+          image_headers = None
+          successful_image_url = None
+
+          print("Image candidates found:", len(ranked_images))
+
+          for image_url, score in ranked_images[:10]:
+              try:
+                  candidate_bytes, candidate_headers = fetch(
+                      image_url, timeout=60
+                  )
+
+                  content_type = candidate_headers.get(
+                      "Content-Type", ""
+                  ).split(";")[0].lower()
+
+                  if (
+                      candidate_bytes
+                      and content_type.startswith("image/")
+                      and len(candidate_bytes) <= 10 * 1024 * 1024
+                  ):
+                      image_bytes = candidate_bytes
+                      image_headers = candidate_headers
+                      successful_image_url = image_url
+                      print("Selected image URL:", image_url)
+                      print("Image file size:", len(image_bytes), "bytes")
+                      print("Image content type:", content_type)
+                      break
+
+              except Exception as exc:
+                  print(
+                      "Image candidate failed:",
+                      type(exc).__name__
+                  )
+
+          if image_bytes is None:
+              raise SystemExit(
+                  "ERROR: No usable product image could be downloaded."
+              )
+
+          print("Product title:", title)
+          print("Product description found:", bool(description))
+
+          # Read price and currency from Product structured data.
+          offers = product.get("offers", {})
+
+          if isinstance(offers, list):
+              offers = offers[0] if offers else {}
+
+          if (
+              isinstance(offers, dict)
+              and isinstance(offers.get("offers"), list)
+          ):
+              offers = offers["offers"][0] if offers["offers"] else {}
+
+          raw_price = (
+              offers.get("price")
+              if isinstance(offers, dict)
+              else None
+          )
+
+          currency = (
+              offers.get("priceCurrency", "")
+              if isinstance(offers, dict)
+              else ""
+          ).upper()
+
           price = None
+
           if raw_price is not None:
               try:
                   price = Decimal(str(raw_price))
               except InvalidOperation:
-                  pass
+                  price = None
 
-          print("Product title:", title)
-          print("Product description found:", bool(description))
-          print("Product image found:", bool(image))
-          print("Product price found:", price is not None)
+          # Convert to Toman:
+          # IRR = Iranian Rial, so divide by 10.
+          # IRT/TMN/TOM and explicit Toman values are already Toman.
+          def to_toman(value, currency_code):
+              if currency_code == "IRR":
+                  return value / Decimal("10")
+              if currency_code in ("IRT", "TMN", "TOM", "TOMAN"):
+                  return value
+              return None
+
+          def format_amount(value):
+              rounded = value.quantize(
+                  Decimal("1"),
+                  rounding=ROUND_HALF_UP
+              )
+              return f"{int(rounded):,}".replace(",", "٬")
+
+          toman_price = None
+          installment = None
 
           if price is not None:
-              installment = price / Decimal("4")
-              print("Price currency from site:", currency or "not specified")
-              print("Product price:", price)
-              print("Each installment (price / 4):", installment)
+              toman_price = to_toman(price, currency)
+
+              if toman_price is not None:
+                  installment = toman_price / Decimal("4")
+                  print("Product price in Toman:", toman_price)
+                  print("Each installment in Toman:", installment)
+              else:
+                  print(
+                      "WARNING: Unknown currency; price will not be "
+                      "converted or displayed as Toman."
+                  )
           else:
-              installment = None
-              print("WARNING: Price was not found in structured product data.")
+              print("WARNING: Structured product price was not found.")
 
-          if not image:
-              raise SystemExit("ERROR: Product image was not found.")
+          # Compose a readable Persian caption with a separate product link.
+          caption_parts = [title]
 
-          print("Step 3: Downloading image.")
-          image_bytes, image_headers = fetch(image, timeout=60)
-          if not image_bytes:
-              raise SystemExit("ERROR: Image download returned no data.")
-          if len(image_bytes) > 10 * 1024 * 1024:
-              raise SystemExit("ERROR: Image exceeds Telegram photo limit.")
+          if toman_price is not None:
+              caption_parts.append(
+                  "💰 قیمت محصول: "
+                  + format_amount(toman_price)
+                  + " تومان"
+              )
 
-          content_type = image_headers.get("Content-Type", "").split(";")[0]
-          if not content_type.startswith("image/"):
-              raise SystemExit("ERROR: Image URL did not return an image.")
+              caption_parts.append(
+                  "💳 خرید در ۴ قسط: "
+                  + format_amount(installment)
+                  + " تومان / هر قسط"
+              )
+          else:
+              caption_parts.append(
+                  "💰 برای اطلاع از قیمت و شرایط پرداخت، صفحه محصول را ببینید."
+              )
+
+          caption_parts.append(
+              "📝 معرفی محصول\n" + (
+                  description[:500]
+                  if description
+                  else "برای مشاهده مشخصات کامل محصول، وارد صفحه آن شوید."
+              )
+          )
+
+          caption_parts.append(
+              "🔗 مشاهده محصول و خرید آنلاین:\n" + product_url
+          )
+
+          caption = "\n\n".join(caption_parts)
+
+          # Telegram photo captions have a 1024-character limit.
+          # Keep the URL intact even if the description is unusually long.
+          if len(caption) > 1000:
+              link_block = (
+                  "\n\n🔗 مشاهده محصول و خرید آنلاین:\n" + product_url
+              )
+              fixed_parts = caption_parts[:-1]
+              while fixed_parts and len(
+                  "\n\n".join(fixed_parts) + link_block
+              ) > 1000:
+                  fixed_parts[-1] = fixed_parts[-1][:max(
+                      0, len(fixed_parts[-1]) - 50
+                  )].rstrip()
+
+                  if not fixed_parts[-1]:
+                      fixed_parts.pop()
+
+              caption = "\n\n".join(fixed_parts) + link_block
+
+          print("Step 3: Preparing product photo for Telegram.")
+          print("Caption length:", len(caption))
+
+          content_type = image_headers.get(
+              "Content-Type", ""
+          ).split(";")[0].lower()
 
           extension = {
               "image/jpeg": "jpg",
               "image/png": "png",
-              "image/webp": "webp"
+              "image/webp": "webp",
+              "image/avif": "jpg",
           }.get(content_type, "jpg")
 
-          caption_parts = [title]
-          if price is not None:
-              caption_parts.append(
-                  "قیمت درج‌شده در سایت: " + str(price) +
-                  (" " + currency if currency else "")
-              )
-              caption_parts.append(
-                  "قیمت هر قسط (۴ قسط): " + str(installment) +
-                  (" " + currency if currency else "")
-              )
-          else:
-              caption_parts.append(
-                  "قیمت و اقساط را در صفحه محصول بررسی کنید."
-              )
-
-          caption_parts.append(description[:350])
-          caption_parts.append(product_url)
-          caption = "\n\n".join(caption_parts)[:1000]
-
-          print("Step 4: Uploading image to Telegram Chat ID.")
+          print("Step 4: Uploading image to Telegram.")
           boundary = "----TopatKatooniBoundary"
           body = bytearray()
 
           def add_field(name, value):
               body.extend(("--" + boundary + "\r\n").encode())
               body.extend((
-                  'Content-Disposition: form-data; name="' +
-                  name + '"\r\n\r\n'
+                  'Content-Disposition: form-data; name="'
+                  + name + '"\r\n\r\n'
               ).encode())
               body.extend(str(value).encode("utf-8"))
               body.extend(b"\r\n")
 
-          # Preserve explicit Telegram destination.
+          # Keep the current Telegram destination and multipart upload.
           add_field("chat_id", CHAT_ID)
           add_field("caption", caption)
 
@@ -298,7 +598,9 @@ jobs:
               'Content-Disposition: form-data; name="photo"; '
               'filename="product.' + extension + '"\r\n'
           ).encode())
-          body.extend(("Content-Type: " + content_type + "\r\n\r\n").encode())
+          body.extend(
+              ("Content-Type: " + content_type + "\r\n\r\n").encode()
+          )
           body.extend(image_bytes)
           body.extend(b"\r\n")
           body.extend(("--" + boundary + "--\r\n").encode())
@@ -306,27 +608,42 @@ jobs:
           api_url = (
               "https://api.telegram.org/bot" + TOKEN + "/sendPhoto"
           )
+
           request = urllib.request.Request(
               api_url,
               data=bytes(body),
               headers={
-                  "Content-Type": "multipart/form-data; boundary=" + boundary
+                  "Content-Type": (
+                      "multipart/form-data; boundary=" + boundary
+                  )
               },
               method="POST"
           )
 
           try:
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  result = json.loads(response.read().decode("utf-8"))
+              with urllib.request.urlopen(
+                  request, timeout=60
+              ) as response:
+                  result = json.loads(
+                      response.read().decode("utf-8")
+                  )
+
           except urllib.error.HTTPError as error:
-              details = error.read().decode("utf-8", errors="replace")
+              details = error.read().decode(
+                  "utf-8", errors="replace"
+              )
               print("Telegram HTTP status:", error.code)
               print("Telegram response:", details[:1000])
-              raise SystemExit("ERROR: Telegram photo upload failed.")
+              raise SystemExit(
+                  "ERROR: Telegram photo upload failed."
+              )
 
           if not result.get("ok"):
               print("Telegram API rejected the request.")
-              raise SystemExit("ERROR: Telegram did not confirm the send.")
+              print("Telegram response:", str(result)[:1000])
+              raise SystemExit(
+                  "ERROR: Telegram did not confirm the send."
+              )
 
           message = result.get("result", {})
           returned_chat = str(message.get("chat", {}).get("id", ""))
@@ -338,7 +655,8 @@ jobs:
               or not message.get("photo")
           ):
               raise SystemExit(
-                  "ERROR: Telegram response did not confirm the expected photo."
+                  "ERROR: Telegram response did not confirm "
+                  "the expected photo."
               )
 
           print("SUCCESS: Product photo and details sent to Telegram.")
