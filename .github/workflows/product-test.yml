@@ -8,46 +8,90 @@ jobs:
   product-test:
     runs-on: ubuntu-latest
     steps:
-      - name: Check product page
+      - name: Read product and send image to Telegram
         env:
           PRODUCT_URL: ${{ secrets.PRODUCT_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python - <<'PY'
           import os
-          import urllib.request
           import re
           import html
+          import json
+          import urllib.request
+          import urllib.parse
 
           url = os.environ["PRODUCT_URL"]
-          request = urllib.request.Request(
-              url,
-              headers={"User-Agent": "Mozilla/5.0"}
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          if not url or not token or not chat_id:
+              raise SystemExit("ERROR: One or more GitHub Secrets are missing.")
+
+          req = urllib.request.Request(
+              url, headers={"User-Agent": "Mozilla/5.0"}
           )
 
-          with urllib.request.urlopen(request, timeout=30) as response:
+          with urllib.request.urlopen(req, timeout=30) as response:
               page = response.read().decode("utf-8", errors="replace")
 
           def get_meta(prop):
-              pattern = (
-                  r'<meta[^>]+property=["\']'
-                  + re.escape(prop)
-                  + r'["\'][^>]+content=["\']([^"\']*)'
-              )
-              match = re.search(pattern, page, re.I)
-              if not match:
-                  pattern = (
-                      r'<meta[^>]+content=["\']([^"\']*)'
-                      r'["\'][^>]+property=["\']'
-                      + re.escape(prop) + r'["\']'
-                  )
+              patterns = [
+                  r'<meta[^>]+property=["\']' + re.escape(prop) +
+                  r'["\'][^>]+content=["\']([^"\']*)',
+                  r'<meta[^>]+content=["\']([^"\']*)' +
+                  r'["\'][^>]+property=["\']' + re.escape(prop) + r'["\']'
+              ]
+              for pattern in patterns:
                   match = re.search(pattern, page, re.I)
-              return html.unescape(match.group(1)) if match else None
+                  if match:
+                      return html.unescape(match.group(1))
+              return None
 
-          title = get_meta("og:title") or "عنوان محصول پیدا نشد"
+          title = get_meta("og:title") or "محصول توپات کتونی"
           image = get_meta("og:image")
 
-          print("Product page opened successfully")
+          if not image:
+              raise SystemExit("ERROR: Product image was not found.")
+
+          image = urllib.parse.urljoin(url, image)
           print("Product title:", title)
-          print("Product image found:", bool(image))
-          print("Product URL:", url)
+          print("Product image found: True")
+
+          caption = title[:900] + "\n" + url
+          api = "https://api.telegram.org/bot" + token + "/sendPhoto"
+
+          boundary = "----TopatKatooniBoundary"
+          parts = []
+
+          def add_field(name, value):
+              parts.append(
+                  ("--" + boundary + "\r\n"
+                   'Content-Disposition: form-data; name="' + name + '"\r\n\r\n'
+                   + str(value) + "\r\n").encode()
+              )
+
+          add_field("chat_id", chat_id)
+          add_field("photo", image)
+          add_field("caption", caption)
+
+          body = b"".join(parts) + ("--" + boundary + "--\r\n").encode()
+
+          request = urllib.request.Request(
+              api,
+              data=body,
+              headers={
+                  "Content-Type": "multipart/form-data; boundary=" + boundary
+              },
+              method="POST"
+          )
+
+          with urllib.request.urlopen(request, timeout=60) as response:
+              result = json.loads(response.read().decode("utf-8"))
+
+          if not result.get("ok"):
+              raise SystemExit("ERROR: Telegram did not accept the photo.")
+
+          print("SUCCESS: Product photo sent to Telegram.")
           PY
