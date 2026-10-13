@@ -53,7 +53,7 @@ jobs:
               if node.text
           ]
 
-          # Also support a sitemap index, if this file contains child sitemaps.
+          # Support sitemap indexes containing child sitemaps.
           child_maps = [
               node.text.strip()
               for node in root.findall(".//sm:sitemap/sm:loc", ns)
@@ -69,36 +69,38 @@ jobs:
               )
 
           product_urls = list(dict.fromkeys(product_urls))
-          product_urls = [
-              url for url in product_urls
-              if urllib.parse.urlparse(url).netloc.lower()
-              == urllib.parse.urlparse(BASE).netloc.lower()
-          ]
+          site_host = urllib.parse.urlparse(BASE).netloc.lower()
 
-          print("Product URLs found:", len(product_urls))
+          # Exclude archives, shop, cart, checkout and account pages.
+          excluded_paths = {
+              "/shop", "/cart", "/checkout", "/my-account"
+          }
+          excluded_markers = (
+              "/product-category/",
+              "/product-tag/",
+              "/category/",
+              "/tag/",
+              "/page/",
+          )
 
-          if not product_urls:
-              raise SystemExit("ERROR: No product URLs found.")
+          candidates = []
+          for url in product_urls:
+              parsed = urllib.parse.urlparse(url)
+              path = parsed.path.lower().rstrip("/") or "/"
 
-          # Send only one product during this test.
-          product_url = product_urls[0]
-          print("Selected product URL:", product_url)
+              if parsed.netloc.lower() != site_host:
+                  continue
+              if path in excluded_paths:
+                  continue
+              if any(marker in path + "/" for marker in excluded_markers):
+                  continue
 
-          print("Step 2: Extracting product details.")
-          page = fetch_text(product_url)
+              candidates.append(url)
 
-          def get_meta(prop):
-              patterns = [
-                  r'<meta[^>]+property=["\']' + re.escape(prop) +
-                  r'["\'][^>]+content=["\']([^"\']*)',
-                  r'<meta[^>]+content=["\']([^"\']*)' +
-                  r'["\'][^>]+property=["\']' + re.escape(prop) + r'["\']'
-              ]
-              for pattern in patterns:
-                  match = re.search(pattern, page, re.I)
-                  if match:
-                      return html.unescape(match.group(1)).strip()
-              return None
+          print("Candidate URLs after archive filtering:", len(candidates))
+
+          if not candidates:
+              raise SystemExit("ERROR: No candidate URLs found in sitemap.")
 
           def find_products(obj):
               if isinstance(obj, dict):
@@ -113,17 +115,70 @@ jobs:
                   for value in obj:
                       yield from find_products(value)
 
-          products = []
           json_ld_pattern = (
               r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>'
               r'(.*?)</script>'
           )
 
-          for match in re.finditer(json_ld_pattern, page, re.I | re.S):
+          def extract_product_schema(page_html):
+              products = []
+              for match in re.finditer(
+                  json_ld_pattern, page_html, re.I | re.S
+              ):
+                  try:
+                      products.extend(
+                          find_products(json.loads(match.group(1)))
+                      )
+                  except (json.JSONDecodeError, TypeError):
+                      continue
+              return products
+
+          # Verify candidate pages and select the first real Product page.
+          product_url = None
+          page = None
+          products = []
+
+          for candidate in candidates[:30]:
               try:
-                  products.extend(find_products(json.loads(match.group(1))))
-              except (json.JSONDecodeError, TypeError):
-                  pass
+                  candidate_page = fetch_text(candidate)
+                  candidate_products = extract_product_schema(candidate_page)
+
+                  if candidate_products:
+                      product_url = candidate
+                      page = candidate_page
+                      products = candidate_products
+                      break
+
+                  print("Skipping page without Product schema:", candidate)
+
+              except Exception as exc:
+                  print(
+                      "Skipping candidate due to fetch error:",
+                      type(exc).__name__
+                  )
+
+          if not product_url:
+              raise SystemExit(
+                  "ERROR: No verified Product page found in first 30 candidates."
+              )
+
+          print("Verified product URL:", product_url)
+          print("Step 2: Extracting product details.")
+
+          def get_meta(prop):
+              patterns = [
+                  r'<meta[^>]+property=["\']' + re.escape(prop) +
+                  r'["\'][^>]+content=["\']([^"\']*)',
+                  r'<meta[^>]+content=["\']([^"\']*)' +
+                  r'["\'][^>]+property=["\']' + re.escape(prop) + r'["\']',
+                  r'<meta[^>]+name=["\']' + re.escape(prop) +
+                  r'["\'][^>]+content=["\']([^"\']*)',
+              ]
+              for pattern in patterns:
+                  match = re.search(pattern, page, re.I)
+                  if match:
+                      return html.unescape(match.group(1)).strip()
+              return None
 
           product = products[0] if products else {}
 
@@ -204,18 +259,19 @@ jobs:
 
           caption_parts = [title]
           if price is not None:
-              caption_parts.append("قیمت درج‌شده در سایت: " + str(price) + (
-                  " " + currency if currency else ""
-              ))
               caption_parts.append(
-                  "قیمت هر قسط (۴ قسط): " + str(installment) + (
-                      " " + currency if currency else ""
-                  )
+                  "قیمت درج‌شده در سایت: " + str(price) +
+                  (" " + currency if currency else "")
+              )
+              caption_parts.append(
+                  "قیمت هر قسط (۴ قسط): " + str(installment) +
+                  (" " + currency if currency else "")
               )
           else:
               caption_parts.append(
                   "قیمت و اقساط را در صفحه محصول بررسی کنید."
               )
+
           caption_parts.append(description[:350])
           caption_parts.append(product_url)
           caption = "\n\n".join(caption_parts)[:1000]
@@ -233,7 +289,7 @@ jobs:
               body.extend(str(value).encode("utf-8"))
               body.extend(b"\r\n")
 
-          # IMPORTANT: Explicitly set the destination Telegram chat.
+          # Preserve explicit Telegram destination.
           add_field("chat_id", CHAT_ID)
           add_field("caption", caption)
 
