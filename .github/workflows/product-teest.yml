@@ -1,0 +1,180 @@
+
+name: Topat Katooni Product Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  product-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download product image and send to Telegram Chat ID
+        env:
+          PRODUCT_URL: ${{ secrets.PRODUCT_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import html
+          import json
+          import mimetypes
+          import urllib.request
+          import urllib.parse
+          import urllib.error
+
+          product_url = os.environ["PRODUCT_URL"].strip()
+          token = os.environ["TELEGRAM_BOT_TOKEN"].strip()
+          chat_id = os.environ["TELEGRAM_CHAT_ID"].strip()
+
+          if not product_url or not token or not chat_id:
+              raise SystemExit("ERROR: Required GitHub Secrets are missing.")
+
+          print("Step 1: Opening product page.")
+          page_request = urllib.request.Request(
+              product_url,
+              headers={"User-Agent": "Mozilla/5.0"}
+          )
+
+          with urllib.request.urlopen(page_request, timeout=30) as response:
+              page = response.read().decode("utf-8", errors="replace")
+
+          def get_meta(prop):
+              patterns = [
+                  r'<meta[^>]+property=["\']' + re.escape(prop) +
+                  r'["\'][^>]+content=["\']([^"\']*)',
+                  r'<meta[^>]+content=["\']([^"\']*)' +
+                  r'["\'][^>]+property=["\']' + re.escape(prop) + r'["\']'
+              ]
+              for pattern in patterns:
+                  match = re.search(pattern, page, re.I)
+                  if match:
+                      return html.unescape(match.group(1)).strip()
+              return None
+
+          title = get_meta("og:title") or "محصول توپات کتونی"
+          image_url = get_meta("og:image")
+
+          if not image_url:
+              raise SystemExit("ERROR: Product image URL was not found.")
+
+          image_url = urllib.parse.urljoin(product_url, image_url)
+          parsed_image = urllib.parse.urlparse(image_url)
+
+          if parsed_image.scheme not in ("http", "https"):
+              raise SystemExit("ERROR: Invalid product image URL.")
+
+          print("Product title:", title)
+          print("Product image URL found: True")
+          print("Step 2: Downloading actual image file.")
+
+          image_request = urllib.request.Request(
+              image_url,
+              headers={"User-Agent": "Mozilla/5.0"}
+          )
+
+          with urllib.request.urlopen(image_request, timeout=60) as response:
+              image_bytes = response.read()
+              content_type = response.headers.get_content_type()
+
+          if not image_bytes:
+              raise SystemExit("ERROR: Downloaded image is empty.")
+
+          if not content_type.startswith("image/"):
+              raise SystemExit(
+                  "ERROR: Downloaded URL did not return an image."
+              )
+
+          print("Image downloaded. Bytes:", len(image_bytes))
+
+          filename = os.path.basename(parsed_image.path) or "product.jpg"
+          if "." not in filename:
+              filename = "product.jpg"
+
+          boundary = "----TopatKatooniUploadBoundary"
+          body = bytearray()
+
+          def add_field(name, value):
+              body.extend(("--" + boundary + "\r\n").encode())
+              body.extend((
+                  'Content-Disposition: form-data; name="' +
+                  name + '"\r\n\r\n'
+              ).encode())
+              body.extend(str(value).encode("utf-8"))
+              body.extend(b"\r\n")
+
+          print("Step 3: Sending photo to the specified Telegram Chat ID.")
+
+          # IMPORTANT: This field explicitly sets the Telegram recipient.
+          add_field("chat_id", chat_id)
+
+          add_field("caption", title[:900] + "\n" + product_url)
+
+          body.extend(("--" + boundary + "\r\n").encode())
+          body.extend((
+              'Content-Disposition: form-data; name="photo"; filename="' +
+              filename.replace('"', '') + '"\r\n'
+          ).encode())
+          body.extend(
+              ("Content-Type: " + content_type + "\r\n\r\n").encode()
+          )
+          body.extend(image_bytes)
+          body.extend(b"\r\n")
+          body.extend(("--" + boundary + "--\r\n").encode())
+
+          # IMPORTANT: sendPhoto sends the downloaded file to chat_id above.
+          telegram_api = (
+              "https://api.telegram.org/bot" + token + "/sendPhoto"
+          )
+
+          telegram_request = urllib.request.Request(
+              telegram_api,
+              data=bytes(body),
+              headers={
+                  "Content-Type": "multipart/form-data; boundary=" + boundary
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(
+                  telegram_request, timeout=60
+              ) as response:
+                  result = json.loads(
+                      response.read().decode("utf-8")
+                  )
+          except urllib.error.HTTPError as error:
+              details = error.read().decode("utf-8", errors="replace")
+              print("Telegram HTTP error:", error.code)
+              print("Telegram response:", details[:1500])
+              raise SystemExit("ERROR: Telegram rejected the photo upload.")
+          except Exception as error:
+              print("Telegram request failed:", str(error))
+              raise SystemExit("ERROR: Telegram request did not complete.")
+
+          if not result.get("ok"):
+              print(
+                  "Telegram API error:",
+                  json.dumps(result, ensure_ascii=False)[:1500]
+              )
+              raise SystemExit("ERROR: Telegram did not confirm delivery.")
+
+          message = result.get("result", {})
+          returned_chat = str(message.get("chat", {}).get("id", ""))
+          message_id = message.get("message_id")
+          photo_sent = bool(message.get("photo"))
+
+          print("Telegram API ok:", result.get("ok"))
+          print("Returned chat ID matches configured ID:",
+                returned_chat == chat_id)
+          print("Telegram message ID:", message_id)
+          print("Telegram confirms photo attached:", photo_sent)
+
+          if returned_chat != chat_id or not message_id or not photo_sent:
+              raise SystemExit(
+                  "ERROR: Telegram response did not confirm the expected photo."
+              )
+
+          print("SUCCESS: Telegram confirmed photo sent to configured Chat ID.")
+          PY
