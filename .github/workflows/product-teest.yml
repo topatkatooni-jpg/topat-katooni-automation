@@ -8,9 +8,8 @@ jobs:
   product-test:
     runs-on: ubuntu-latest
     steps:
-      - name: Discover products, extract details and send one to Telegram
+      - name: Extract product and send photo to Telegram
         env:
-          PRODUCT_URL: ${{ secrets.PRODUCT_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
@@ -26,7 +25,7 @@ jobs:
           from decimal import Decimal, InvalidOperation
 
           BASE = "https://topatkatooni.ir"
-          SITEMAP = BASE + "/wp-sitemap.xml"
+          SITEMAP = BASE + "/product-sitemap.xml"
           TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
           CHAT_ID = os.environ["TELEGRAM_CHAT_ID"].strip()
 
@@ -38,42 +37,36 @@ jobs:
                   url, headers={"User-Agent": "Mozilla/5.0"}
               )
               with urllib.request.urlopen(req, timeout=timeout) as response:
-                  return response.read()
+                  return response.read(), response.headers
 
-          def text_fetch(url):
-              return fetch(url).decode("utf-8", errors="replace")
+          def fetch_text(url):
+              data, _ = fetch(url)
+              return data.decode("utf-8", errors="replace")
 
-          print("Step 1: Reading WordPress sitemap.")
-          xml_text = text_fetch(SITEMAP)
-          root = ET.fromstring(xml_text)
+          print("Step 1: Reading product sitemap.")
+          root = ET.fromstring(fetch_text(SITEMAP))
           ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
-          sitemap_urls = [
-              item.text.strip()
-              for item in root.findall(".//sm:sitemap/sm:loc", ns)
-              if item.text
+          product_urls = [
+              node.text.strip()
+              for node in root.findall(".//sm:url/sm:loc", ns)
+              if node.text
           ]
 
-          product_maps = [
-              url for url in sitemap_urls
-              if "product" in url.lower()
+          # Also support a sitemap index, if this file contains child sitemaps.
+          child_maps = [
+              node.text.strip()
+              for node in root.findall(".//sm:sitemap/sm:loc", ns)
+              if node.text
           ]
 
-          product_urls = []
-
-          if product_maps:
-              for map_url in product_maps:
-                  try:
-                      map_root = ET.fromstring(text_fetch(map_url))
-                      for item in map_root.findall(".//sm:url/sm:loc", ns):
-                          if item.text:
-                              product_urls.append(item.text.strip())
-                  except Exception as exc:
-                      print("Could not read one sitemap:", type(exc).__name__)
-          else:
-              for item in root.findall(".//sm:url/sm:loc", ns):
-                  if item.text:
-                      product_urls.append(item.text.strip())
+          for child_map in child_maps:
+              child_root = ET.fromstring(fetch_text(child_map))
+              product_urls.extend(
+                  node.text.strip()
+                  for node in child_root.findall(".//sm:url/sm:loc", ns)
+                  if node.text
+              )
 
           product_urls = list(dict.fromkeys(product_urls))
           product_urls = [
@@ -82,20 +75,17 @@ jobs:
               == urllib.parse.urlparse(BASE).netloc.lower()
           ]
 
-          print("Product sitemap files:", len(product_maps))
-          print("Product URLs discovered:", len(product_urls))
+          print("Product URLs found:", len(product_urls))
 
           if not product_urls:
-              raise SystemExit(
-                  "ERROR: No product URLs found in the WordPress sitemap."
-              )
+              raise SystemExit("ERROR: No product URLs found.")
 
-          # This test sends only one product to avoid flooding Telegram.
+          # Send only one product during this test.
           product_url = product_urls[0]
           print("Selected product URL:", product_url)
 
-          print("Step 2: Reading product page.")
-          page = text_fetch(product_url)
+          print("Step 2: Extracting product details.")
+          page = fetch_text(product_url)
 
           def get_meta(prop):
               patterns = [
@@ -123,19 +113,19 @@ jobs:
                   for value in obj:
                       yield from find_products(value)
 
-          structured_products = []
-          for match in re.finditer(
-              r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-              page, re.I | re.S
-          ):
+          products = []
+          json_ld_pattern = (
+              r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>'
+              r'(.*?)</script>'
+          )
+
+          for match in re.finditer(json_ld_pattern, page, re.I | re.S):
               try:
-                  structured_products.extend(
-                      find_products(json.loads(match.group(1)))
-                  )
+                  products.extend(find_products(json.loads(match.group(1))))
               except (json.JSONDecodeError, TypeError):
                   pass
 
-          product = structured_products[0] if structured_products else {}
+          product = products[0] if products else {}
 
           title = (
               product.get("name")
@@ -146,10 +136,10 @@ jobs:
           description = (
               product.get("description")
               or get_meta("og:description")
-              or "برای مشاهده جزئیات به صفحه محصول مراجعه کنید."
+              or "برای مشاهده مشخصات کامل به صفحه محصول مراجعه کنید."
           )
-          description = re.sub(r"\s+", " ", html.unescape(description)).strip()
-          description = re.sub(r"<[^>]+>", "", description)
+          description = re.sub(r"<[^>]+>", "", html.unescape(description))
+          description = re.sub(r"\s+", " ", description).strip()
 
           image = product.get("image") or get_meta("og:image")
           if isinstance(image, list):
@@ -162,72 +152,75 @@ jobs:
           offers = product.get("offers", {})
           if isinstance(offers, list):
               offers = offers[0] if offers else {}
-          price_value = offers.get("price") if isinstance(offers, dict) else None
-          currency = offers.get("priceCurrency", "IRR") if isinstance(offers, dict) else "IRR"
+          if isinstance(offers, dict) and isinstance(offers.get("offers"), list):
+              offers = offers["offers"][0] if offers["offers"] else {}
+
+          raw_price = offers.get("price") if isinstance(offers, dict) else None
+          currency = (
+              offers.get("priceCurrency", "")
+              if isinstance(offers, dict) else ""
+          )
 
           price = None
-          if price_value is not None:
+          if raw_price is not None:
               try:
-                  price = Decimal(str(price_value))
+                  price = Decimal(str(raw_price))
               except InvalidOperation:
                   pass
 
-          # Fallback: common WooCommerce price markup.
-          if price is None:
-              price_patterns = [
-                  r'<meta[^>]+property=["\']product:price:amount["\'][^>]+content=["\']([^"\']+)',
-                  r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']product:price:amount["\']',
-                  r'<p[^>]*class=["\'][^"\']*price[^"\']*["\'][^>]*>.*?'
-                  r'(?:(?:data-price|amount)["\']?[^>]*>)?'
-                  r'\s*([\d,٬٫.]+)'
-              ]
-              for pattern in price_patterns:
-                  match = re.search(pattern, page, re.I | re.S)
-                  if match:
-                      raw = match.group(1).replace(",", "").replace("٬", "").strip()
-                      try:
-                          price = Decimal(raw)
-                          break
-                      except InvalidOperation:
-                          pass
-
           print("Product title:", title)
-          print("Price found:", price is not None)
-          print("Image found:", bool(image))
+          print("Product description found:", bool(description))
+          print("Product image found:", bool(image))
+          print("Product price found:", price is not None)
 
           if price is not None:
               installment = price / Decimal("4")
-              print("Price currency:", currency)
+              print("Price currency from site:", currency or "not specified")
               print("Product price:", price)
-              print("Each of 4 installments:", installment)
+              print("Each installment (price / 4):", installment)
           else:
               installment = None
-              print("WARNING: Price was not reliably extracted.")
+              print("WARNING: Price was not found in structured product data.")
 
           if not image:
               raise SystemExit("ERROR: Product image was not found.")
 
-          print("Step 3: Downloading product image.")
-          image_bytes = fetch(image, timeout=60)
+          print("Step 3: Downloading image.")
+          image_bytes, image_headers = fetch(image, timeout=60)
           if not image_bytes:
-              raise SystemExit("ERROR: Product image download was empty.")
-
+              raise SystemExit("ERROR: Image download returned no data.")
           if len(image_bytes) > 10 * 1024 * 1024:
               raise SystemExit("ERROR: Image exceeds Telegram photo limit.")
 
+          content_type = image_headers.get("Content-Type", "").split(";")[0]
+          if not content_type.startswith("image/"):
+              raise SystemExit("ERROR: Image URL did not return an image.")
+
+          extension = {
+              "image/jpeg": "jpg",
+              "image/png": "png",
+              "image/webp": "webp"
+          }.get(content_type, "jpg")
+
           caption_parts = [title]
           if price is not None:
-              caption_parts.append("قیمت محصول: " + str(price) + " " + currency)
+              caption_parts.append("قیمت درج‌شده در سایت: " + str(price) + (
+                  " " + currency if currency else ""
+              ))
               caption_parts.append(
-                  "هر قسط از ۴ قسط: " + str(installment) + " " + currency
+                  "قیمت هر قسط (۴ قسط): " + str(installment) + (
+                      " " + currency if currency else ""
+                  )
               )
           else:
-              caption_parts.append("قیمت را در صفحه محصول بررسی کنید.")
-          caption_parts.append(description[:500])
+              caption_parts.append(
+                  "قیمت و اقساط را در صفحه محصول بررسی کنید."
+              )
+          caption_parts.append(description[:350])
           caption_parts.append(product_url)
           caption = "\n\n".join(caption_parts)[:1000]
 
-          print("Step 4: Uploading photo to configured Telegram Chat ID.")
+          print("Step 4: Uploading image to Telegram Chat ID.")
           boundary = "----TopatKatooniBoundary"
           body = bytearray()
 
@@ -240,21 +233,25 @@ jobs:
               body.extend(str(value).encode("utf-8"))
               body.extend(b"\r\n")
 
+          # IMPORTANT: Explicitly set the destination Telegram chat.
           add_field("chat_id", CHAT_ID)
           add_field("caption", caption)
 
           body.extend(("--" + boundary + "\r\n").encode())
-          body.extend(
-              b'Content-Disposition: form-data; name="photo"; filename="product.jpg"\r\n'
-          )
-          body.extend(b"Content-Type: image/jpeg\r\n\r\n")
+          body.extend((
+              'Content-Disposition: form-data; name="photo"; '
+              'filename="product.' + extension + '"\r\n'
+          ).encode())
+          body.extend(("Content-Type: " + content_type + "\r\n\r\n").encode())
           body.extend(image_bytes)
           body.extend(b"\r\n")
           body.extend(("--" + boundary + "--\r\n").encode())
 
-          api = "https://api.telegram.org/bot" + TOKEN + "/sendPhoto"
+          api_url = (
+              "https://api.telegram.org/bot" + TOKEN + "/sendPhoto"
+          )
           request = urllib.request.Request(
-              api,
+              api_url,
               data=bytes(body),
               headers={
                   "Content-Type": "multipart/form-data; boundary=" + boundary
@@ -265,24 +262,29 @@ jobs:
           try:
               with urllib.request.urlopen(request, timeout=60) as response:
                   result = json.loads(response.read().decode("utf-8"))
-          except urllib.error.HTTPError as exc:
-              details = exc.read().decode("utf-8", errors="replace")
-              print("Telegram HTTP status:", exc.code)
+          except urllib.error.HTTPError as error:
+              details = error.read().decode("utf-8", errors="replace")
+              print("Telegram HTTP status:", error.code)
               print("Telegram response:", details[:1000])
               raise SystemExit("ERROR: Telegram photo upload failed.")
 
           if not result.get("ok"):
-              print("Telegram rejected request.")
-              raise SystemExit("ERROR: Telegram did not confirm photo send.")
+              print("Telegram API rejected the request.")
+              raise SystemExit("ERROR: Telegram did not confirm the send.")
 
           message = result.get("result", {})
           returned_chat = str(message.get("chat", {}).get("id", ""))
           message_id = message.get("message_id")
 
-          if returned_chat != CHAT_ID or not message_id or not message.get("photo"):
-              raise SystemExit("ERROR: Telegram response was not as expected.")
+          if (
+              returned_chat != CHAT_ID
+              or not message_id
+              or not message.get("photo")
+          ):
+              raise SystemExit(
+                  "ERROR: Telegram response did not confirm the expected photo."
+              )
 
-          print("SUCCESS: One product photo and caption sent to Telegram.")
+          print("SUCCESS: Product photo and details sent to Telegram.")
           print("Telegram message ID:", message_id)
-          print("Installment calculation completed when price was available.")
           PY
