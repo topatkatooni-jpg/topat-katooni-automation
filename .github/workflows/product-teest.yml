@@ -1,9 +1,6 @@
 name: Topat Katooni Product Gallery Album
-
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */2 * * *'
 
 jobs:
   publish-product:
