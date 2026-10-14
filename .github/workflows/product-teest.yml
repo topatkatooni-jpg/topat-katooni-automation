@@ -1,5 +1,5 @@
 
-name: Topat Katooni Product Test
+name: Topat Katooni AI Product Albums
 
 on:
   workflow_dispatch:
@@ -7,11 +7,21 @@ on:
 jobs:
   product-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        product-index: [0, 1]
     steps:
-      - name: Extract product and send photo to Telegram
+      - name: Install image processing dependency
+        run: python -m pip install --quiet Pillow
+
+      - name: Extract product, generate images, and send Telegram album
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRODUCT_INDEX: ${{ matrix.product-index }}
         run: |
           python - <<'PY'
           import os
@@ -28,9 +38,14 @@ jobs:
           SITEMAP = BASE + "/product-sitemap.xml"
           TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
           CHAT_ID = os.environ["TELEGRAM_CHAT_ID"].strip()
+          CF_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+          CF_ACCOUNT = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+          PRODUCT_INDEX = int(os.environ.get("PRODUCT_INDEX", "0"))
 
           if not TOKEN or not CHAT_ID:
               raise SystemExit("ERROR: Telegram secrets are missing.")
+          if not CF_TOKEN or not CF_ACCOUNT:
+              print("WARNING: Cloudflare secrets missing; original product photo will be sent.")
 
           def fetch(url, timeout=30):
               req = urllib.request.Request(
@@ -187,21 +202,25 @@ jobs:
           product_url = None
           page = None
           products = []
+          valid_product_count = 0
 
-          # Check candidates until a real Product page is found.
+          # Matrix jobs select different verified product pages.
           # The limit prevents an excessively long test run.
-          for candidate in candidates[:30]:
+          for candidate in candidates[:80]:
               try:
                   candidate_page = fetch_text(candidate)
                   candidate_products = extract_product_schema(candidate_page)
 
                   if candidate_products:
-                      product_url = candidate
-                      page = candidate_page
-                      products = candidate_products
-                      break
-
-                  print("Skipping page without Product schema:", candidate)
+                      if valid_product_count == PRODUCT_INDEX:
+                          product_url = candidate
+                          page = candidate_page
+                          products = candidate_products
+                          break
+                      valid_product_count += 1
+                      print("Skipping already assigned product:", candidate)
+                  else:
+                      print("Skipping page without Product schema:", candidate)
 
               except Exception as exc:
                   print(
@@ -211,7 +230,7 @@ jobs:
 
           if not product_url:
               raise SystemExit(
-                  "ERROR: No Product page found in the first 30 candidates."
+                  "ERROR: Could not find verified product index " + str(PRODUCT_INDEX)
               )
 
           print("Verified product URL:", product_url)
@@ -222,13 +241,13 @@ jobs:
           title = clean_text(
               product.get("name")
               or get_meta(page, "og:title")
-              or "محصول توپات کتونی"
+              or "賲丨氐賵賱 鬲賵倬丕鬲 讴鬲賵賳蹖"
           )
 
           description = clean_text(
               product.get("description")
               or get_meta(page, "og:description")
-              or "برای مشاهده مشخصات کامل به صفحه محصول مراجعه کنید."
+              or "亘乇丕蹖 賲卮丕賴丿賴 賲卮禺氐丕鬲 讴丕賲賱 亘賴 氐賮丨賴 賲丨氐賵賱 賲乇丕噩毓賴 讴賳蹖丿."
           )
 
           # Keep the original product description, with readable spacing.
@@ -489,7 +508,7 @@ jobs:
                   Decimal("1"),
                   rounding=ROUND_HALF_UP
               )
-              return f"{int(rounded):,}".replace(",", "٬")
+              return f"{int(rounded):,}".replace(",", "佻")
 
           toman_price = None
           installment = None
@@ -514,31 +533,31 @@ jobs:
 
           if toman_price is not None:
               caption_parts.append(
-                  "💰 قیمت محصول: "
+                  "馃挵 賯蹖賲鬲 賲丨氐賵賱: "
                   + format_amount(toman_price)
-                  + " تومان"
+                  + " 鬲賵賲丕賳"
               )
 
               caption_parts.append(
-                  "💳 خرید در ۴ قسط: "
+                  "馃挸 禺乇蹖丿 丿乇 鄞 賯爻胤: "
                   + format_amount(installment)
-                  + " تومان / هر قسط"
+                  + " 鬲賵賲丕賳 / 賴乇 賯爻胤"
               )
           else:
               caption_parts.append(
-                  "💰 برای اطلاع از قیمت و شرایط پرداخت، صفحه محصول را ببینید."
+                  "馃挵 亘乇丕蹖 丕胤賱丕毓 丕夭 賯蹖賲鬲 賵 卮乇丕蹖胤 倬乇丿丕禺鬲貙 氐賮丨賴 賲丨氐賵賱 乇丕 亘亘蹖賳蹖丿."
               )
 
           caption_parts.append(
-              "📝 معرفی محصول\n" + (
+              "馃摑 賲毓乇賮蹖 賲丨氐賵賱\n" + (
                   description[:500]
                   if description
-                  else "برای مشاهده مشخصات کامل محصول، وارد صفحه آن شوید."
+                  else "亘乇丕蹖 賲卮丕賴丿賴 賲卮禺氐丕鬲 讴丕賲賱 賲丨氐賵賱貙 賵丕乇丿 氐賮丨賴 丌賳 卮賵蹖丿."
               )
           )
 
           caption_parts.append(
-              "🔗 مشاهده محصول و خرید آنلاین:\n" + product_url
+              "馃敆 賲卮丕賴丿賴 賲丨氐賵賱 賵 禺乇蹖丿 丌賳賱丕蹖賳:\n" + product_url
           )
 
           caption = "\n\n".join(caption_parts)
@@ -547,7 +566,7 @@ jobs:
           # Keep the URL intact even if the description is unusually long.
           if len(caption) > 1000:
               link_block = (
-                  "\n\n🔗 مشاهده محصول و خرید آنلاین:\n" + product_url
+                  "\n\n馃敆 賲卮丕賴丿賴 賲丨氐賵賱 賵 禺乇蹖丿 丌賳賱丕蹖賳:\n" + product_url
               )
               fixed_parts = caption_parts[:-1]
               while fixed_parts and len(
@@ -562,103 +581,175 @@ jobs:
 
               caption = "\n\n".join(fixed_parts) + link_block
 
-          print("Step 3: Preparing product photo for Telegram.")
-          print("Caption length:", len(caption))
+          print("Step 3: Generating up to three product images with Workers AI.")
+          content_type = image_headers.get("Content-Type", "").split(";")[0].lower()
+          from PIL import Image
+          from io import BytesIO
+          import base64
+          import random
 
-          content_type = image_headers.get(
-              "Content-Type", ""
-          ).split(";")[0].lower()
+          generated_images = []
+          if CF_TOKEN and CF_ACCOUNT:
+              try:
+                  # Reference images for FLUX.2 Klein must be smaller than 512x512.
+                  with Image.open(BytesIO(image_bytes)) as source_image:
+                      source_image = source_image.convert("RGB")
+                      source_image.thumbnail((480, 480), Image.Resampling.LANCZOS)
+                      ref_buffer = BytesIO()
+                      source_image.save(ref_buffer, format="JPEG", quality=88, optimize=True)
+                      reference_bytes = ref_buffer.getvalue()
 
-          extension = {
-              "image/jpeg": "jpg",
-              "image/png": "png",
-              "image/webp": "webp",
-              "image/avif": "jpg",
-          }.get(content_type, "jpg")
+                  model_url = (
+                      "https://api.cloudflare.com/client/v4/accounts/"
+                      + CF_ACCOUNT
+                      + "/ai/run/@cf/black-forest-labs/flux-2-klein-4b"
+                  )
 
-          print("Step 4: Uploading image to Telegram.")
-          boundary = "----TopatKatooniBoundary"
-          body = bytearray()
+                  prompts = [
+                      "Create a premium photorealistic commercial sneaker product photograph using input_image_0 as the exact product reference. Preserve the sneaker identity with maximum fidelity: same silhouette, panel layout, colors, materials, sole shape, logos, branding, stitching and laces. Do not invent text or logos, do not redesign, recolor, mirror or flip the shoe. One sneaker hero on a clean minimal white studio background, soft realistic shadows, professional ecommerce lighting, no people, no text, square composition.",
+                      "Create a different premium photorealistic ecommerce campaign photograph using input_image_0 as the exact sneaker reference. The shoe must remain the same exact model and colorway: preserve silhouette, panels, material texture, sole, logos, stitching and both visible laces. Do not redesign, recolor, mirror or flip the shoe. Three-quarter product angle on a very light neutral grey (#EEEEEE) studio background, subtle grounded shadow, refined softbox lighting, no people, no text, square composition.",
+                      "Create a third distinct photorealistic premium sneaker advertising photograph using input_image_0 as the exact product reference. Preserve the exact sneaker design, colors, shape, materials, outsole, logos, stitching and laces. No redesign, no added details, no mirrored shoe, no text or people. Minimal modern studio scene with a subtle pale grey architectural plinth and soft natural directional light, clean background, realistic contact shadow, square composition."
+                  ]
 
-          def add_field(name, value):
+                  for image_number, prompt in enumerate(prompts, start=1):
+                      boundary = "----TopatCloudflareBoundary" + str(random.randint(100000, 999999))
+                      request_body = bytearray()
+
+                      def cf_field(name, value):
+                          request_body.extend(("--" + boundary + "\r\n").encode())
+                          request_body.extend((
+                              'Content-Disposition: form-data; name="' + name + '"\r\n\r\n'
+                          ).encode())
+                          request_body.extend(str(value).encode("utf-8"))
+                          request_body.extend(b"\r\n")
+
+                      cf_field("prompt", prompt)
+                      cf_field("width", "1024")
+                      cf_field("height", "1024")
+                      request_body.extend(("--" + boundary + "\r\n").encode())
+                      request_body.extend((
+                          'Content-Disposition: form-data; name="input_image_0"; filename="reference.jpg"\r\n'
+                          'Content-Type: image/jpeg\r\n\r\n'
+                      ).encode())
+                      request_body.extend(reference_bytes)
+                      request_body.extend(b"\r\n--" + boundary.encode() + b"--\r\n")
+
+                      cf_request = urllib.request.Request(
+                          model_url,
+                          data=bytes(request_body),
+                          headers={
+                              "Authorization": "Bearer " + CF_TOKEN,
+                              "Content-Type": "multipart/form-data; boundary=" + boundary,
+                          },
+                          method="POST",
+                      )
+                      try:
+                          with urllib.request.urlopen(cf_request, timeout=180) as response:
+                              response_data = json.loads(response.read().decode("utf-8"))
+                          result_data = response_data.get("result") or {}
+                          encoded_image = result_data.get("image")
+                          if not encoded_image:
+                              raise ValueError("Cloudflare response did not include result.image")
+                          generated_bytes = base64.b64decode(encoded_image)
+                          with Image.open(BytesIO(generated_bytes)) as generated:
+                              generated = generated.convert("RGB")
+                              output_buffer = BytesIO()
+                              generated.save(output_buffer, format="JPEG", quality=92, optimize=True)
+                              generated_images.append(output_buffer.getvalue())
+                          print("Generated AI image", image_number, "size:", len(generated_images[-1]))
+                      except Exception as exc:
+                          print("Cloudflare generation failed for image", image_number, type(exc).__name__)
+                          raise
+
+                  print("SUCCESS: Generated three AI images.")
+              except Exception as exc:
+                  print("WARNING: AI image generation failed; falling back to original product photo.", type(exc).__name__)
+                  generated_images = []
+          else:
+              print("Cloudflare credentials unavailable; falling back to original product photo.")
+
+          print("Step 4: Sending product to Telegram.")
+          if len(generated_images) == 3:
+              # Telegram albums accept 2-10 media items; caption is attached to first item.
+              boundary = "----TopatKatooniAlbumBoundary"
+              body = bytearray()
+              media = [
+                  {"type": "photo", "media": "attach://photo0", "caption": caption},
+                  {"type": "photo", "media": "attach://photo1"},
+                  {"type": "photo", "media": "attach://photo2"},
+              ]
+
+              def add_field(name, value):
+                  body.extend(("--" + boundary + "\r\n").encode())
+                  body.extend((
+                      'Content-Disposition: form-data; name="' + name + '"\r\n\r\n'
+                  ).encode())
+                  body.extend(str(value).encode("utf-8"))
+                  body.extend(b"\r\n")
+
+              add_field("chat_id", CHAT_ID)
+              add_field("media", json.dumps(media, ensure_ascii=False))
+              for i, generated_bytes in enumerate(generated_images):
+                  body.extend(("--" + boundary + "\r\n").encode())
+                  body.extend((
+                      'Content-Disposition: form-data; name="photo' + str(i) + '"; filename="topat-' + str(i + 1) + '.jpg"\r\n'
+                      'Content-Type: image/jpeg\r\n\r\n'
+                  ).encode())
+                  body.extend(generated_bytes)
+                  body.extend(b"\r\n")
+              body.extend(("--" + boundary + "--\r\n").encode())
+              api_method = "sendMediaGroup"
+          else:
+              # Safe fallback preserves the already-working original photo send path.
+              boundary = "----TopatKatooniBoundary"
+              body = bytearray()
+              add_field = None
+              def add_field(name, value):
+                  body.extend(("--" + boundary + "\r\n").encode())
+                  body.extend((
+                      'Content-Disposition: form-data; name="' + name + '"\r\n\r\n'
+                  ).encode())
+                  body.extend(str(value).encode("utf-8"))
+                  body.extend(b"\r\n")
+              add_field("chat_id", CHAT_ID)
+              add_field("caption", caption)
               body.extend(("--" + boundary + "\r\n").encode())
               body.extend((
-                  'Content-Disposition: form-data; name="'
-                  + name + '"\r\n\r\n'
+                  'Content-Disposition: form-data; name="photo"; filename="product.jpg"\r\n'
+                  'Content-Type: ' + content_type + '\r\n\r\n'
               ).encode())
-              body.extend(str(value).encode("utf-8"))
-              body.extend(b"\r\n")
+              body.extend(image_bytes)
+              body.extend(b"\r\n--" + boundary.encode() + b"--\r\n")
+              api_method = "sendPhoto"
 
-          # Keep the current Telegram destination and multipart upload.
-          add_field("chat_id", CHAT_ID)
-          add_field("caption", caption)
-
-          body.extend(("--" + boundary + "\r\n").encode())
-          body.extend((
-              'Content-Disposition: form-data; name="photo"; '
-              'filename="product.' + extension + '"\r\n'
-          ).encode())
-          body.extend(
-              ("Content-Type: " + content_type + "\r\n\r\n").encode()
-          )
-          body.extend(image_bytes)
-          body.extend(b"\r\n")
-          body.extend(("--" + boundary + "--\r\n").encode())
-
-          api_url = (
-              "https://api.telegram.org/bot" + TOKEN + "/sendPhoto"
-          )
-
+          api_url = "https://api.telegram.org/bot" + TOKEN + "/" + api_method
           request = urllib.request.Request(
               api_url,
               data=bytes(body),
-              headers={
-                  "Content-Type": (
-                      "multipart/form-data; boundary=" + boundary
-                  )
-              },
-              method="POST"
+              headers={"Content-Type": "multipart/form-data; boundary=" + boundary},
+              method="POST",
           )
 
           try:
-              with urllib.request.urlopen(
-                  request, timeout=60
-              ) as response:
-                  result = json.loads(
-                      response.read().decode("utf-8")
-                  )
-
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  result = json.loads(response.read().decode("utf-8"))
           except urllib.error.HTTPError as error:
-              details = error.read().decode(
-                  "utf-8", errors="replace"
-              )
+              details = error.read().decode("utf-8", errors="replace")
               print("Telegram HTTP status:", error.code)
               print("Telegram response:", details[:1000])
-              raise SystemExit(
-                  "ERROR: Telegram photo upload failed."
-              )
+              raise SystemExit("ERROR: Telegram upload failed.")
 
           if not result.get("ok"):
-              print("Telegram API rejected the request.")
-              print("Telegram response:", str(result)[:1000])
-              raise SystemExit(
-                  "ERROR: Telegram did not confirm the send."
-              )
+              print("Telegram API rejected the request:", str(result)[:1000])
+              raise SystemExit("ERROR: Telegram did not confirm the send.")
 
-          message = result.get("result", {})
-          returned_chat = str(message.get("chat", {}).get("id", ""))
-          message_id = message.get("message_id")
+          results = result.get("result", [])
+          if isinstance(results, dict):
+              results = [results]
+          if not results or any(not item.get("message_id") for item in results):
+              raise SystemExit("ERROR: Telegram response did not confirm messages.")
 
-          if (
-              returned_chat != CHAT_ID
-              or not message_id
-              or not message.get("photo")
-          ):
-              raise SystemExit(
-                  "ERROR: Telegram response did not confirm "
-                  "the expected photo."
-              )
-
-          print("SUCCESS: Product photo and details sent to Telegram.")
-          print("Telegram message ID:", message_id)
+          print("SUCCESS: Product details sent to Telegram using", api_method)
+          print("Product index:", PRODUCT_INDEX, "Product URL:", product_url)
+          print("Telegram message IDs:", [item.get("message_id") for item in results])
           PY
