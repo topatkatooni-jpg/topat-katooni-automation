@@ -1,36 +1,486 @@
-Create a premium, photorealistic footwear advertising photograph using the supplied product image as the mandatory and authoritative visual reference.
+model is a WOMAN
 
-**ABSOLUTE PRODUCT IDENTITY LOCK — HIGHEST PRIORITY**
+Canvas Size:
 
-The sneaker in the final image MUST be the exact same physical product shown in the reference image. Do not generate a similar sneaker, a replacement sneaker, or a reinterpretation.
+2048 × 2048 px
 
-Preserve the exact original:
+Aspect Ratio:
 
-* Shoe silhouette, proportions, height, toe shape and heel shape.
-* Upper material, texture, stitching, panels and construction.
-* Exact colors and color placement.
-* Sole shape, thickness, color, tread and sidewall details.
-* Lace color, lace pattern, eyelets, tongue, collar and labels.
-* Every visible logo, brand mark and original design detail.
+1:1 Square
 
-Do not invent, remove, redesign, recolor, simplify or replace any product feature. Do not substitute another sneaker brand or model. The reference image determines the product identity; the text description must never override the reference.
+Use the attached sneaker image as the ONLY product reference.
 
-**SCENE AND STYLING**
+Create an ultra-photorealistic luxury footwear editorial photograph for a premium Instagram carousel.
 
-Create a premium urban streetwear campaign photograph. Show a realistically proportioned adult model from approximately the knees down, wearing understated charcoal or dark-grey straight-leg trousers with a natural hem. Both feet should be anatomically correct and naturally positioned on a clean modern city pavement.
+The sneaker must perfectly preserve every detail from the reference image.
 
-The exact reference sneakers must remain clearly visible, unobstructed and sharply detailed. Use a natural standing pose with a slight stagger between the feet, so the outer side, toe shape, laces and sole are easy to inspect. Do not let trousers cover the shoes.
+Never redesign, reinterpret, modify, mirror, flip, or alter the product.
 
-Use realistic late-afternoon daylight, soft natural shadows, subtle depth of field and a tasteful contemporary urban background. Keep the pavement and architecture understated. The shoes must be the main subject, occupying approximately 45–60% of the image's visual attention.
+Preserve with absolute accuracy:
 
-**CAMERA AND COMPOSITION**
+• Shape
+• Proportions
+• Silhouette
+• Materials
+• Mesh texture
+• Leather panels
+• Stitching
+• Sole geometry
+• Midsole construction
+• Outsole tread
+• Heel counter
+• Toe box
+• Lace system
+• Logos
+• Branding placement
+• Colors
+• Surface finish
+• Panel layout
 
-Vertical 4:5 advertising composition. Low camera angle near shoe height. Professional commercial footwear photography, realistic human anatomy, natural fabric folds, physically plausible contact shadows and accurate perspective. Both shoes must be fully inside the frame, with no cropped toes, heels or soles.
+────────────────────────
 
-**STRICT EXCLUSIONS**
+MODEL
 
-No different shoe model. No extra footwear. No duplicated or fused shoes. No distorted soles, laces, feet or legs. No floating shoes. No hidden product details. No fictional logos or altered labels. No text, watermark, graphics, borders or promotional badges.
+Female model only.
 
-**FINAL QUALITY REQUIREMENT**
+Only the feet and lower legs up to mid-calf are visible.
 
-Product fidelity is more important than artistic creativity. If the scene conflicts with preserving the exact reference sneaker, simplify the scene and preserve the sneaker. The result must look like a professional real-world advertising photograph of the actual product, not an AI-generated substitute.
+No knees.
+
+No upper body.
+
+No hands.
+
+No accessories.
+
+Wear plain white crew socks only.
+
+No logo.
+
+No text.
+
+No graphics.
+
+No colored details.
+
+────────────────────────
+
+WARDROBE
+
+The female model wears premium everyday blue regular-fit denim jeans with a natural subtle washed finish.
+
+The jeans should have a clean, modern, casual feminine appearance.
+
+No ripped denim.
+
+No embroidery.
+
+No visible branding.
+
+No graphics.
+
+The jeans naturally rest over the sneakers while keeping the footwear clearly visible.
+
+The sneakers remain the undisputed visual hero of the image.
+
+────────────────────────
+
+SHOT TYPE
+
+Dynamic Walking Lifestyle Shot.
+
+The image represents a premium everyday footwear lifestyle photograph.
+
+Both sneakers must be visible.
+
+The LEFT sneaker is the PRIMARY VISUAL SUBJECT and must receive the strongest visual emphasis.
+
+The RIGHT sneaker acts as a natural secondary supporting element.
+
+The composition should feel effortless, realistic, feminine, contemporary, and premium.
+
+────────────────────────
+
+PRIMARY FOOT — CRITICAL
+
+The LEFT foot must be the center of attention.
+
+The LEFT sneaker should be:
+
+• Slightly closer to the camera.
+• Slightly larger in the composition.
+• Positioned as the visual anchor.
+• Sharper and more prominently visible.
+• Given the strongest material and detail visibility.
+
+The RIGHT sneaker should remain fully visible but slightly secondary.
+
+Do NOT make the right sneaker compete visually with the left sneaker.
+
+The visual hierarchy must clearly be:
+
+1. LEFT sneaker — primary focal point.
+2. RIGHT sneaker — secondary supporting element.
+
+────────────────────────
+
+FOOTWEAR SIDE VISIBILITY — CRITICAL
+
+The image MUST show the authentic real-world side orientation of BOTH shoes.
+
+LEFT FOOT:
+
+The LEFT foot must wear the LEFT shoe.
+
+The visible side of the LEFT shoe must be its TRUE OUTER SIDE (LATERAL SIDE).
+
+Show the lateral/outer side of the left sneaker clearly as the primary visible surface.
+
+RIGHT FOOT:
+
+The RIGHT foot must wear the RIGHT shoe.
+
+The visible side of the RIGHT shoe must be its TRUE INNER SIDE (MEDIAL SIDE).
+
+Show the medial/inner side of the right sneaker clearly as the secondary visible surface.
+
+Therefore:
+
+LEFT FOOT = LEFT SHOE + OUTER / LATERAL SIDE VISIBLE.
+
+RIGHT FOOT = RIGHT SHOE + INNER / MEDIAL SIDE VISIBLE.
+
+This combination is intentional and MUST be preserved.
+
+The image must NOT show two identical side views.
+
+The image must NOT show two outer sides.
+
+The image must NOT show two inner sides.
+
+The purpose of the composition is specifically to showcase the OUTER SIDE OF THE LEFT SHOE as the primary subject while naturally showing the INNER SIDE OF THE RIGHT SHOE as the secondary shoe.
+
+────────────────────────
+
+FOOTWEAR ANATOMY — ABSOLUTE PRIORITY
+
+Maintain anatomically correct left and right footwear orientation at all times.
+
+The LEFT foot must always wear the LEFT shoe.
+
+The RIGHT foot must always wear the RIGHT shoe.
+
+Never swap the shoes.
+
+Never mirror the shoes.
+
+Never flip the footwear horizontally.
+
+Never duplicate the same shoe.
+
+Never generate two left shoes.
+
+Never generate two right shoes.
+
+The medial and lateral sides must remain exactly where they belong anatomically.
+
+The visible product details must correspond to the actual side of each shoe.
+
+Do not transform an outer side into an inner side.
+
+Do not transform an inner side into an outer side.
+
+Do not invent missing details.
+
+Do not copy details from one side of the shoe onto the opposite side.
+
+Preserve authentic real-world footwear anatomy, construction and orientation.
+
+────────────────────────
+
+TOE DIRECTION
+
+Both sneakers should naturally point toward the LEFT side of the frame.
+
+The LEFT sneaker must clearly point toward the LEFT.
+
+The RIGHT sneaker must also naturally point toward the LEFT.
+
+Toe = LEFT.
+
+Heel = RIGHT.
+
+Do not reverse the walking direction.
+
+Do not rotate either sneaker unnaturally simply to reveal a different side.
+
+────────────────────────
+
+POSE
+
+Natural casual walking motion.
+
+The LEFT foot is the leading foot and primary focal point.
+
+The LEFT sneaker is firmly planted or naturally transitioning through a walking step.
+
+The RIGHT foot is slightly behind and naturally supporting the walking motion.
+
+Natural weight transfer.
+
+Realistic ankle positioning.
+
+Natural leg alignment.
+
+No exaggerated stride.
+
+No running.
+
+No jumping.
+
+No unnatural leg rotation.
+
+No twisted ankles.
+
+No unnatural foot positioning.
+
+The pose should communicate effortless everyday movement and premium lifestyle.
+
+────────────────────────
+
+CAMERA
+
+Low Front Three-Quarter View.
+
+Approximately 30–35° toward the toe.
+
+Camera positioned approximately 15–20 cm above the ground.
+
+The camera is positioned primarily to showcase the LEFT sneaker.
+
+The LEFT sneaker should occupy slightly more visual area than the RIGHT sneaker.
+
+Camera angle must clearly reveal:
+
+• LEFT SHOE → outer / lateral side.
+• RIGHT SHOE → inner / medial side.
+
+Use natural premium commercial perspective.
+
+Avoid excessive perspective distortion.
+
+Do not use an angle that causes both shoes to appear from the same side.
+
+────────────────────────
+
+COMPOSITION
+
+Luxury commercial footwear composition.
+
+The LEFT sneaker must be positioned near the visual center of the frame.
+
+The LEFT sneaker is the clear hero product.
+
+The RIGHT sneaker should naturally appear slightly behind or offset from the LEFT sneaker.
+
+Both sneakers must remain fully visible.
+
+Nothing important cropped.
+
+Balanced negative space.
+
+Strong visual hierarchy.
+
+The viewer's eye should immediately land on the LEFT sneaker.
+
+The composition should feel like a premium international footwear campaign rather than a generic shoe photograph.
+
+Designed as a lifestyle footwear campaign image.
+
+────────────────────────
+
+BACKGROUND
+
+Solid #EEEEEE seamless studio background.
+
+Clean matte surface.
+
+No texture.
+
+No gradients.
+
+No visible floor texture.
+
+No visible horizon line.
+
+────────────────────────
+
+LIGHTING
+
+Soft premium commercial studio lighting.
+
+Large diffused key light.
+
+Soft fill light.
+
+Subtle natural rim lighting.
+
+The LEFT sneaker receives the strongest and cleanest illumination.
+
+Excellent visibility of the LEFT sneaker's materials, stitching, panels, branding and sole construction.
+
+The RIGHT sneaker receives slightly softer supporting illumination while remaining clearly visible.
+
+Beautiful material definition.
+
+Clean highlights.
+
+Soft realistic contact shadows beneath the shoes.
+
+Natural falloff.
+
+No harsh shadows.
+
+No blown highlights.
+
+────────────────────────
+
+IMPORTANT
+
+Do NOT show any lighting equipment.
+
+No softboxes.
+
+No reflectors.
+
+No umbrellas.
+
+No light stands.
+
+No tripods.
+
+No C-stands.
+
+No modifiers.
+
+No cables.
+
+No props.
+
+No furniture.
+
+No studio accessories.
+
+Only the feet, lower legs, white socks, blue everyday denim jeans and sneakers are visible.
+
+────────────────────────
+
+CAMERA SETTINGS
+
+70mm Prime Lens
+
+f/5.6
+
+ISO100
+
+Professional commercial footwear photography.
+
+Ultra sharp focus.
+
+Motion frozen with maximum detail.
+
+────────────────────────
+
+COLOR
+
+Accurate color reproduction.
+
+Natural white balance.
+
+Premium luxury color grading.
+
+Natural blue denim color.
+
+No oversaturation.
+
+No unrealistic contrast.
+
+────────────────────────
+
+QUALITY
+
+Ultra Photorealistic
+
+Hyper Realistic
+
+Luxury Commercial Footwear Photography
+
+Editorial Campaign Quality
+
+International Advertising Standard
+
+8K Resolution
+
+Super Resolution
+
+Extreme Detail
+
+Perfect Material Rendering
+
+Natural Skin Texture
+
+Photorealistic Fabric Texture
+
+Crisp Stitching
+
+Realistic Rubber Surface
+
+Premium Advertising Campaign
+
+Flawless Image Quality
+
+Instagram Luxury Carousel Ready
+
+────────────────────────
+
+FINAL ANATOMICAL CHECK — CRITICAL
+
+Before generating the image, verify all of the following:
+
+1. LEFT foot is wearing the LEFT sneaker.
+
+2. RIGHT foot is wearing the RIGHT sneaker.
+
+3. LEFT sneaker shows its TRUE OUTER / LATERAL SIDE.
+
+4. RIGHT sneaker shows its TRUE INNER / MEDIAL SIDE.
+
+5. LEFT sneaker is the primary visual focus.
+
+6. RIGHT sneaker is secondary but fully visible.
+
+7. Both sneakers point toward the LEFT side of the frame.
+
+8. Toe = LEFT.
+
+9. Heel = RIGHT.
+
+10. The two visible shoe sides are NOT identical.
+
+11. The shoes are NOT mirrored or flipped.
+
+12. No shoe details are transferred from one side to the other.
+
+13. The sneaker design remains 100% faithful to the attached reference.
+
+14. Both shoes look physically connected to their correct feet.
+
+15. The pose is anatomically natural.
+
+16. The model is clearly female.
+
+17. The jeans are casual everyday blue denim.
+
+18. The socks are plain white crew socks.
+
+The final image must look like a real professional footwear campaign photograph of a WOMAN naturally walking while wearing the exact referenced sneakers, with the LEFT sneaker clearly established as the hero product.
