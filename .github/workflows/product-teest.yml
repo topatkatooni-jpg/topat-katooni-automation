@@ -19,7 +19,7 @@ jobs:
       - name: Select product and publish gallery album
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           python - <<'PY'
@@ -40,7 +40,7 @@ jobs:
           BASE = "https://topatkatooni.ir"
           SITEMAP = BASE + "/product-sitemap.xml"
           BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
-          CHAT_ID = os.environ["TELEGRAM_CHAT_ID"].strip()
+          CHAT_ID = os.environ["TELEGRAM_CHANNEL_ID"].strip()
           RUN_NUMBER = max(1, int(os.environ.get("RUN_NUMBER", "1")))
 
           if not BOT_TOKEN or not CHAT_ID:
@@ -385,50 +385,154 @@ jobs:
                       "of 3",
                   )
               except Exception as exc:
-                  print("Skipping image:", type(exc).__name__)
+                  print("Skipping gallery image:", type(exc).__name__)
 
-          if len(gallery_images) != 3:
+          if len(gallery_images) < 3:
               raise SystemExit(
-                  "ERROR: Could not find three distinct usable product images. "
+                  "ERROR: Found fewer than three distinct usable images. "
                   "Nothing was published."
               )
 
-          # Extract price and currency from Product structured data.
+          print("Product title:", title)
+          print("Product description found:", bool(description))
+
+          # Read price and currency from Product structured data.
           offers = product.get("offers", {})
+
           if isinstance(offers, list):
               offers = offers[0] if offers else {}
-          if isinstance(offers, dict) and isinstance(offers.get("offers"), list):
+
+          if (
+              isinstance(offers, dict)
+              and isinstance(offers.get("offers"), list)
+          ):
               offers = offers["offers"][0] if offers["offers"] else {}
 
-          raw_price = offers.get("price") if isinstance(offers, dict) else None
-          currency = (
-              offers.get("priceCurrency", "").upper()
+          raw_price = (
+              offers.get("price")
               if isinstance(offers, dict)
-              else ""
+              else None
           )
 
+          currency = (
+              offers.get("priceCurrency", "")
+              if isinstance(offers, dict)
+              else ""
+          ).upper()
+
           price = None
+
           if raw_price is not None:
               try:
                   price = Decimal(str(raw_price))
               except InvalidOperation:
-                  pass
+                  price = None
 
-          toman_price = None
-          if price is not None:
-              if currency == "IRR":
-                  toman_price = price / Decimal("10")
-              elif currency in ("IRT", "TMN", "TOM", "TOMAN"):
-                  toman_price = price
+          # Convert prices to Toman when the currency is known.
+          def to_toman(value, currency_code):
+              if currency_code == "IRR":
+                  return value / Decimal("10")
+              if currency_code in ("IRT", "TMN", "TOM", "TOMAN"):
+                  return value
+              return None
 
           def format_amount(value):
               rounded = value.quantize(
                   Decimal("1"),
-                  rounding=ROUND_HALF_UP,
+                  rounding=ROUND_HALF_UP
               )
               return f"{int(rounded):,}".replace(",", "٬")
 
-          caption_parts = [title]
+          toman_price = None
+          installment = None
+
+          if price is not None:
+              toman_price = to_toman(price, currency)
+
+              if toman_price is not None:
+                  installment = toman_price / Decimal("4")
+                  print("Product price in Toman:", toman_price)
+                  print("Each installment in Toman:", installment)
+              else:
+                  print(
+                      "WARNING: Unknown currency; price will not be "
+                      "converted or displayed as Toman."
+                  )
+          else:
+              print("WARNING: Structured product price was not found.")
+
+          # Extract available EU shoe sizes from product data and page markup.
+          size_values = set()
+
+          def add_sizes_from_text(value):
+              if not value:
+                  return
+              for match in re.findall(
+                  r"(?<!\d)(3[5-9]|4[0-6])(?:\.0)?(?!\d)",
+                  str(value),
+              ):
+                  size_values.add(int(match))
+
+          def walk_size_data(obj):
+              if isinstance(obj, dict):
+                  for key, value in obj.items():
+                      key_text = str(key).lower()
+                      if any(term in key_text for term in (
+                          "size", "pa_size", "attribute_pa_size", "number"
+                      )):
+                          if isinstance(value, (str, int, float)):
+                              add_sizes_from_text(value)
+                          elif isinstance(value, list):
+                              for item in value:
+                                  add_sizes_from_text(item)
+                      walk_size_data(value)
+              elif isinstance(obj, list):
+                  for item in obj:
+                      walk_size_data(item)
+
+          walk_size_data(product)
+
+          # Inspect size-related controls and product attributes in the HTML.
+          for tag in re.findall(
+              r"<(?:option|button|a|li|td|th|span|div)\b[^>]*>"
+              r".*?</(?:option|button|a|li|td|th|span|div)>",
+              page,
+              re.I | re.S,
+          ):
+              if re.search(
+                  r"size|pa_size|attribute_pa_size|سایز|سایزبندی",
+                  tag,
+                  re.I,
+              ):
+                  add_sizes_from_text(clean_text(tag))
+
+          for tag in re.findall(
+              r"<option\b[^>]*>.*?</option>",
+              page,
+              re.I | re.S,
+          ):
+              add_sizes_from_text(clean_text(tag))
+
+          for match in re.finditer(
+              r"(?:سایز(?:بندی)?|size|pa_size|attribute_pa_size)[^<]{0,120}",
+              page,
+              re.I,
+          ):
+              add_sizes_from_text(clean_text(match.group(0)))
+
+          if size_values:
+              size_text = "، ".join(
+                  str(value) for value in sorted(size_values)
+              )
+              size_line = "👟 سایزبندی موجود: " + size_text
+          else:
+              size_line = (
+                  "👟 سایزبندی: برای اطلاع از سایزهای موجود، "
+                  "صفحه محصول را بررسی کنید."
+              )
+
+          # Build the Persian product caption.
+          caption_parts = [title, size_line]
 
           if toman_price is not None:
               caption_parts.append(
@@ -438,43 +542,54 @@ jobs:
               )
               caption_parts.append(
                   "🛍 خرید در ۴ قسط: "
-                  + format_amount(toman_price / Decimal("4"))
+                  + format_amount(installment)
                   + " تومان / هر قسط"
               )
           else:
               caption_parts.append(
-                  "💰 برای اطلاع از قیمت و شرایط پرداخت، صفحه محصول را ببینید."
+                  "💰 برای اطلاع از قیمت و شرایط پرداخت، "
+                  "صفحه محصول را ببینید."
               )
+
+          caption_parts.append(
+              "💳 خرید اقساطی با اعتبار اسنپ‌پی، دیجی‌پی و ترب‌پی فعال است."
+          )
 
           caption_parts.append(
               "📋 معرفی محصول\n"
               + (
-                  description[:450]
+                  description[:500]
                   if description
                   else "برای مشاهده مشخصات کامل محصول، وارد صفحه آن شوید."
               )
           )
+
           caption_parts.append(
               "🔗 مشاهده محصول و خرید آنلاین:\n" + product_url
           )
+
           caption = "\n\n".join(caption_parts)
 
+          # Telegram album captions have a 1024-character limit.
           if len(caption) > 1000:
-              caption = (
-                  title[:120]
-                  + "\n\n"
-                  + (
-                      "💰 قیمت محصول: "
-                      + format_amount(toman_price)
-                      + " تومان\n\n"
-                      if toman_price is not None
-                      else ""
-                  )
-                  + "🔗 مشاهده محصول و خرید آنلاین:\n"
-                  + product_url
+              link_block = (
+                  "\n\n🔗 مشاهده محصول و خرید آنلاین:\n" + product_url
               )
+              fixed_parts = caption_parts[:-1]
+              while fixed_parts and len(
+                  "\n\n".join(fixed_parts) + link_block
+              ) > 1000:
+                  fixed_parts[-1] = fixed_parts[-1][:max(
+                      0, len(fixed_parts[-1]) - 50
+                  )].rstrip()
+                  if not fixed_parts[-1]:
+                      fixed_parts.pop()
 
-          # Send the three photos as one Telegram album.
+              caption = "\n\n".join(fixed_parts) + link_block
+
+          print("Step 3: Sending the three original product gallery images as a Telegram album.")
+
+          # Telegram sendMediaGroup accepts 2 to 10 images.
           boundary = "----TopatKatooniAlbum" + uuid.uuid4().hex
           media = []
 
@@ -553,12 +668,14 @@ jobs:
               raise SystemExit("ERROR: Telegram rejected the album.")
 
           messages = telegram_result.get("result", [])
-          if len(messages) != 3:
+          if len(messages) != 3 or any(
+              not item.get("message_id") for item in messages
+          ):
               raise SystemExit(
                   "ERROR: Telegram did not confirm all three album images."
               )
 
           print("SUCCESS: Three product gallery images published as an album.")
           print("Product URL:", product_url)
-          print("Telegram message IDs:", [m.get("message_id") for m in messages])
+          print("Telegram message IDs:", [m["message_id"] for m in messages])
           PY
