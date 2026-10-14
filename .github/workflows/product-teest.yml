@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        product-index: [0, 1]
+        product-index: [0]
     steps:
       - name: Install image processing dependency
         run: python -m pip install --quiet Pillow
@@ -73,6 +73,11 @@ jobs:
               value = re.sub(r"<[^>]+>", " ", value)
               value = re.sub(r"\s+", " ", value)
               return value.strip()
+
+          def remove_cjk(value):
+              # Guard against mojibake or unexpected Chinese/Japanese/Korean text.
+              value = re.sub(r"[\u2e80-\u2eff\u3000-\u303f\u3040-\u30ff\u3100-\u312f\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+", " ", value)
+              return re.sub(r"\s+", " ", value).strip()
 
           def get_meta(page_html, prop):
               patterns = [
@@ -251,7 +256,10 @@ jobs:
           )
 
           # Keep the original product description, with readable spacing.
-          description = re.sub(r"\s+", " ", description).strip()
+          title = remove_cjk(title) or "賲丨氐賵賱 鬲賵倬丕鬲 讴鬲賵賳蹖"
+          description = remove_cjk(re.sub(r"\s+", " ", description).strip())
+          if not description:
+              description = "亘乇丕蹖 賲卮丕賴丿賴 賲卮禺氐丕鬲 讴丕賲賱 賵 卮乇丕蹖胤 禺乇蹖丿貙 氐賮丨賴 賲丨氐賵賱 乇丕 亘亘蹖賳蹖丿."
 
           # Convert possible schema image values to absolute URLs.
           def image_values(value):
@@ -657,16 +665,21 @@ jobs:
                               generated.save(output_buffer, format="JPEG", quality=92, optimize=True)
                               generated_images.append(output_buffer.getvalue())
                           print("Generated AI image", image_number, "size:", len(generated_images[-1]))
+                      except urllib.error.HTTPError as exc:
+                          details = exc.read().decode("utf-8", errors="replace")
+                          print("Cloudflare HTTP status for image", image_number, ":", exc.code)
+                          print("Cloudflare response:", details[:2000])
+                          raise
                       except Exception as exc:
-                          print("Cloudflare generation failed for image", image_number, type(exc).__name__)
+                          print("Cloudflare generation failed for image", image_number, type(exc).__name__, str(exc)[:500])
                           raise
 
                   print("SUCCESS: Generated three AI images.")
               except Exception as exc:
-                  print("WARNING: AI image generation failed; falling back to original product photo.", type(exc).__name__)
-                  generated_images = []
+                  print("ERROR: AI image generation failed; refusing to send the original photo as if it were an AI album.")
+                  raise SystemExit("AI image generation failed. See Cloudflare error details above.") from exc
           else:
-              print("Cloudflare credentials unavailable; falling back to original product photo.")
+              raise SystemExit("ERROR: Cloudflare credentials are missing; AI image generation cannot run.")
 
           print("Step 4: Sending product to Telegram.")
           if len(generated_images) == 3:
