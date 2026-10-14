@@ -238,11 +238,6 @@ jobs:
               or get_meta(page, "og:title")
               or "محصول توپات کتونی"
           )
-          description = clean_text(
-              product.get("description")
-              or get_meta(page, "og:description")
-              or "برای مشاهده مشخصات کامل محصول، وارد صفحه آن شوید."
-          )
 
           # Read images listed in Product data.
           image_candidates = []
@@ -394,7 +389,6 @@ jobs:
               )
 
           print("Product title:", title)
-          print("Product description found:", bool(description))
 
           # Read price and currency from Product structured data.
           offers = product.get("offers", {})
@@ -461,133 +455,158 @@ jobs:
           else:
               print("WARNING: Structured product price was not found.")
 
-          # Extract available EU shoe sizes from product data and page markup.
-          size_values = set()
+          # Extract only sizes whose WooCommerce variation is actually in stock.
+          available_sizes = set()
+          variation_data_found = False
 
-          def add_sizes_from_text(value):
-              if not value:
-                  return
-              for match in re.findall(
-                  r"(?<!\d)(3[5-9]|4[0-6])(?:\.0)?(?!\d)",
-                  str(value),
-              ):
-                  size_values.add(int(match))
+          def size_from_value(value):
+              if value is None:
+                  return None
+              text = html.unescape(str(value)).strip()
+              match = re.fullmatch(r"(3[5-9]|4[0-6])(?:\.0)?", text)
+              return int(match.group(1)) if match else None
 
-          def walk_size_data(obj):
-              if isinstance(obj, dict):
-                  for key, value in obj.items():
-                      key_text = str(key).lower()
-                      if any(term in key_text for term in (
-                          "size", "pa_size", "attribute_pa_size", "number"
-                      )):
-                          if isinstance(value, (str, int, float)):
-                              add_sizes_from_text(value)
-                          elif isinstance(value, list):
-                              for item in value:
-                                  add_sizes_from_text(item)
-                      walk_size_data(value)
-              elif isinstance(obj, list):
-                  for item in obj:
-                      walk_size_data(item)
-
-          walk_size_data(product)
-
-          # Inspect size-related controls and product attributes in the HTML.
-          for tag in re.findall(
-              r"<(?:option|button|a|li|td|th|span|div)\b[^>]*>"
-              r".*?</(?:option|button|a|li|td|th|span|div)>",
+          # WooCommerce commonly exposes variation stock in this attribute.
+          variation_match = re.search(
+              r"""data-product_variations\s*=\s*(["'])(.*?)\1""",
               page,
               re.I | re.S,
-          ):
-              if re.search(
-                  r"size|pa_size|attribute_pa_size|سایز|سایزبندی",
-                  tag,
-                  re.I,
-              ):
-                  add_sizes_from_text(clean_text(tag))
+          )
 
-          for tag in re.findall(
-              r"<option\b[^>]*>.*?</option>",
-              page,
-              re.I | re.S,
-          ):
-              add_sizes_from_text(clean_text(tag))
+          if variation_match:
+              raw_variations = html.unescape(variation_match.group(2)).strip()
+              if raw_variations and raw_variations.lower() != "false":
+                  try:
+                      variations = json.loads(raw_variations)
+                  except (json.JSONDecodeError, TypeError):
+                      variations = None
 
-          for match in re.finditer(
-              r"(?:سایز(?:بندی)?|size|pa_size|attribute_pa_size)[^<]{0,120}",
-              page,
-              re.I,
-          ):
-              add_sizes_from_text(clean_text(match.group(0)))
+                  if isinstance(variations, list):
+                      variation_data_found = True
+                      for variation in variations:
+                          if not isinstance(variation, dict):
+                              continue
+                          if variation.get("is_in_stock") is not True:
+                              continue
+                          if variation.get("is_purchasable") is False:
+                              continue
 
-          if size_values:
-              size_text = "، ".join(
-                  str(value) for value in sorted(size_values)
+                          attributes = variation.get("attributes", {})
+                          if not isinstance(attributes, dict):
+                              continue
+
+                          for key, value in attributes.items():
+                              normalized_key = str(key).lower()
+                              if "size" not in normalized_key:
+                                  continue
+
+                              parsed_size = size_from_value(value)
+                              if parsed_size is not None:
+                                  available_sizes.add(parsed_size)
+
+          # Fallback: inspect size selectors only when variation data is absent.
+          if not variation_data_found:
+              option_pattern = re.compile(
+                  r"<option\b([^>]*)>(.*?)</option>",
+                  re.I | re.S,
               )
-              size_line = "👟 سایزبندی موجود: " + size_text
+              size_select_pattern = re.compile(
+                  r"<select\b([^>]*)>(.*?)</select>",
+                  re.I | re.S,
+              )
+
+              for select_attrs, select_body in size_select_pattern.findall(page):
+                  if not re.search(
+                      r"size|pa_size|attribute_pa_size",
+                      select_attrs,
+                      re.I,
+                  ):
+                      continue
+
+                  for option_attrs, option_label in option_pattern.findall(select_body):
+                      option_tag = "<option " + option_attrs + ">"
+                      parsed_size = size_from_value(get_attr(option_tag, "value"))
+
+                      if parsed_size is None:
+                          parsed_size = size_from_value(clean_text(option_label))
+
+                      if parsed_size is None:
+                          continue
+
+                      disabled = bool(
+                          re.search(r"\bdisabled(?:\s|=|$)", option_attrs, re.I)
+                      )
+                      out_of_stock = bool(
+                          re.search(
+                              r"out[-_ ]?of[-_ ]?stock|unavailable|ناموجود",
+                              option_attrs + " " + option_label,
+                              re.I,
+                          )
+                      )
+
+                      if not disabled and not out_of_stock:
+                          available_sizes.add(parsed_size)
+
+          if available_sizes:
+              size_text = "، ".join(
+                  str(value) for value in sorted(available_sizes)
+              )
+              size_line = "📏 سایزهای موجود: " + size_text
           else:
               size_line = (
-                  "👟 سایزبندی: برای اطلاع از سایزهای موجود، "
-                  "صفحه محصول را بررسی کنید."
+                  "📏 برای اطلاع از سایزهای موجود، صفحه محصول را بررسی کنید."
               )
 
-          # Build the Persian product caption.
+          # Build a concise Persian product caption.
           caption_parts = [title, size_line]
 
           if toman_price is not None:
               caption_parts.append(
-                  "💰 قیمت محصول: "
+                  "💰 قیمت: "
                   + format_amount(toman_price)
                   + " تومان"
               )
               caption_parts.append(
-                  "🛍 خرید در ۴ قسط: "
+                  "🛍 هر قسط: "
                   + format_amount(installment)
-                  + " تومان / هر قسط"
+                  + " تومان"
               )
           else:
               caption_parts.append(
-                  "💰 برای اطلاع از قیمت و شرایط پرداخت، "
-                  "صفحه محصول را ببینید."
+                  "💰 برای اطلاع از قیمت، صفحه محصول را ببینید."
               )
 
           caption_parts.append(
-              "💳 خرید اقساطی با اعتبار اسنپ‌پی، دیجی‌پی و ترب‌پی فعال است."
+              "💳 خرید اقساطی با اسنپ‌پی، دیجی‌پی و ترب‌پی"
           )
 
           caption_parts.append(
-              "📋 معرفی محصول\n"
-              + (
-                  description[:500]
-                  if description
-                  else "برای مشاهده مشخصات کامل محصول، وارد صفحه آن شوید."
-              )
-          )
-
-          caption_parts.append(
-              "🔗 مشاهده محصول و خرید آنلاین:\n" + product_url
+              "🔗 خرید آنلاین:\n" + product_url
           )
 
           caption = "\n\n".join(caption_parts)
 
-          # Telegram album captions have a 1024-character limit.
+          # Keep caption within Telegram's album caption limit.
           if len(caption) > 1000:
-              link_block = (
-                  "\n\n🔗 مشاهده محصول و خرید آنلاین:\n" + product_url
-              )
+              link_block = "\n\n🔗 خرید آنلاین:\n" + product_url
               fixed_parts = caption_parts[:-1]
+
               while fixed_parts and len(
                   "\n\n".join(fixed_parts) + link_block
               ) > 1000:
                   fixed_parts[-1] = fixed_parts[-1][:max(
                       0, len(fixed_parts[-1]) - 50
                   )].rstrip()
+
                   if not fixed_parts[-1]:
                       fixed_parts.pop()
 
               caption = "\n\n".join(fixed_parts) + link_block
 
-          print("Step 3: Sending the three original product gallery images as a Telegram album.")
+          print(
+              "Step 3: Sending the three original product gallery images "
+              "as a Telegram album."
+          )
 
           # Telegram sendMediaGroup accepts 2 to 10 images.
           boundary = "----TopatKatooniAlbum" + uuid.uuid4().hex
@@ -643,6 +662,7 @@ jobs:
               + BOT_TOKEN
               + "/sendMediaGroup"
           )
+
           request = urllib.request.Request(
               telegram_url,
               data=bytes(body),
