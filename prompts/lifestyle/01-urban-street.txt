@@ -1,1 +1,36 @@
-Create a premium, ultra-photorealistic urban streetwear advertising photograph using the provided sneaker reference image. Show the exact sneaker being naturally worn during an everyday walk on a realistic city sidewalk. Focus on the sneakers and lower legs, with modern casual trousers, authentic pavement textures, subtle urban architecture in the background, natural daylight, cinematic composition, realistic contact shadows, and professional lifestyle campaign photography. Preserve the reference sneaker's identity as accurately as possible: silhouette, colors, materials, panel layout, stitching, sole, laces, logos and visible branding. Do not mirror, flip, recolor or redesign the sneaker. Keep the sneaker as the main subject, sharp and visually prominent, with a softly blurred realistic environment. No captions, no typography, no watermarks, no invented logos, no extra shoes, no distorted feet, no surreal elements. Vertical 4:5 advertising composition.
+Create a premium, photorealistic footwear advertising photograph using the supplied product image as the mandatory and authoritative visual reference.
+
+**ABSOLUTE PRODUCT IDENTITY LOCK — HIGHEST PRIORITY**
+
+The sneaker in the final image MUST be the exact same physical product shown in the reference image. Do not generate a similar sneaker, a replacement sneaker, or a reinterpretation.
+
+Preserve the exact original:
+
+* Shoe silhouette, proportions, height, toe shape and heel shape.
+* Upper material, texture, stitching, panels and construction.
+* Exact colors and color placement.
+* Sole shape, thickness, color, tread and sidewall details.
+* Lace color, lace pattern, eyelets, tongue, collar and labels.
+* Every visible logo, brand mark and original design detail.
+
+Do not invent, remove, redesign, recolor, simplify or replace any product feature. Do not substitute another sneaker brand or model. The reference image determines the product identity; the text description must never override the reference.
+
+**SCENE AND STYLING**
+
+Create a premium urban streetwear campaign photograph. Show a realistically proportioned adult model from approximately the knees down, wearing understated charcoal or dark-grey straight-leg trousers with a natural hem. Both feet should be anatomically correct and naturally positioned on a clean modern city pavement.
+
+The exact reference sneakers must remain clearly visible, unobstructed and sharply detailed. Use a natural standing pose with a slight stagger between the feet, so the outer side, toe shape, laces and sole are easy to inspect. Do not let trousers cover the shoes.
+
+Use realistic late-afternoon daylight, soft natural shadows, subtle depth of field and a tasteful contemporary urban background. Keep the pavement and architecture understated. The shoes must be the main subject, occupying approximately 45–60% of the image's visual attention.
+
+**CAMERA AND COMPOSITION**
+
+Vertical 4:5 advertising composition. Low camera angle near shoe height. Professional commercial footwear photography, realistic human anatomy, natural fabric folds, physically plausible contact shadows and accurate perspective. Both shoes must be fully inside the frame, with no cropped toes, heels or soles.
+
+**STRICT EXCLUSIONS**
+
+No different shoe model. No extra footwear. No duplicated or fused shoes. No distorted soles, laces, feet or legs. No floating shoes. No hidden product details. No fictional logos or altered labels. No text, watermark, graphics, borders or promotional badges.
+
+**FINAL QUALITY REQUIREMENT**
+
+Product fidelity is more important than artistic creativity. If the scene conflicts with preserving the exact reference sneaker, simplify the scene and preserve the sneaker. The result must look like a professional real-world advertising photograph of the actual product, not an AI-generated substitute.
