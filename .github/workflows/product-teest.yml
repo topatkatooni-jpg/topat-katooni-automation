@@ -1,6 +1,9 @@
 name: Topat Katooni Product Gallery Album
+
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */2 * * *'
 
 jobs:
   publish-product:
@@ -113,7 +116,9 @@ jobs:
                       products.extend(find_products(json.loads(match.group(1))))
                   except (json.JSONDecodeError, TypeError):
                       pass
-              return productsdef image_values(value):
+              return products
+
+          def image_values(value):
               if isinstance(value, str):
                   return [value]
               if isinstance(value, list):
@@ -224,7 +229,8 @@ jobs:
               "Selected product",
               selected_index + 1,
               "of",
-              len(valid_products),)
+              len(valid_products),
+          )
           print("Product URL:", product_url)
 
           title = clean_text(
@@ -337,7 +343,8 @@ jobs:
           gallery_images = []
           seen_hashes = set()
 
-          for image_url, score in ranked_images:if len(gallery_images) == 3:
+          for image_url, score in ranked_images:
+              if len(gallery_images) == 3:
                   break
               try:
                   image_bytes, headers = fetch(image_url, timeout=60)
@@ -544,4 +551,151 @@ jobs:
               size_text = "، ".join(
                   str(value) for value in sorted(available_sizes)
               )
-              size_line =
+              size_line = "📏 سایزهای موجود: " + size_text
+          else:
+              size_line = (
+                  "📏 برای اطلاع از سایزهای موجود، صفحه محصول را بررسی کنید."
+              )
+
+          # Build a concise Persian product caption.
+          caption_parts = [title, size_line]
+
+          if toman_price is not None:
+              caption_parts.append(
+                  "💰 قیمت: "
+                  + format_amount(toman_price)
+                  + " تومان"
+              )
+              caption_parts.append(
+                  "🛍 هر قسط: "
+                  + format_amount(installment)
+                  + " تومان"
+              )
+          else:
+              caption_parts.append(
+                  "💰 برای اطلاع از قیمت، صفحه محصول را ببینید."
+              )
+
+          caption_parts.append(
+              "💳 خرید اقساطی با اسنپ‌پی، دیجی‌پی و ترب‌پی"
+          )
+
+          caption_parts.append(
+              "🔗 خرید آنلاین:\n" + product_url
+          )
+
+          caption = "\n\n".join(caption_parts)
+
+          # Keep caption within Telegram's album caption limit.
+          if len(caption) > 1000:
+              link_block = "\n\n🔗 خرید آنلاین:\n" + product_url
+              fixed_parts = caption_parts[:-1]
+
+              while fixed_parts and len(
+                  "\n\n".join(fixed_parts) + link_block
+              ) > 1000:
+                  fixed_parts[-1] = fixed_parts[-1][:max(
+                      0, len(fixed_parts[-1]) - 50
+                  )].rstrip()
+
+                  if not fixed_parts[-1]:
+                      fixed_parts.pop()
+
+              caption = "\n\n".join(fixed_parts) + link_block
+
+          print(
+              "Step 3: Sending the three original product gallery images "
+              "as a Telegram album."
+          )
+
+          # Telegram sendMediaGroup accepts 2 to 10 images.
+          boundary = "----TopatKatooniAlbum" + uuid.uuid4().hex
+          media = []
+
+          for index in range(3):
+              media_item = {
+                  "type": "photo",
+                  "media": "attach://photo" + str(index),
+              }
+              if index == 0:
+                  media_item["caption"] = caption[:1024]
+              media.append(media_item)
+
+          body = bytearray()
+
+          def add_field(name, value):
+              body.extend(("--" + boundary + "\r\n").encode())
+              body.extend(
+                  (
+                      'Content-Disposition: form-data; name="'
+                      + name
+                      + '"\r\n\r\n'
+                  ).encode()
+              )
+              body.extend(str(value).encode("utf-8"))
+              body.extend(b"\r\n")
+
+          add_field("chat_id", CHAT_ID)
+          add_field("media", json.dumps(media, ensure_ascii=False))
+
+          for index, item in enumerate(gallery_images):
+              body.extend(("--" + boundary + "\r\n").encode())
+              body.extend(
+                  (
+                      'Content-Disposition: form-data; name="photo'
+                      + str(index)
+                      + '"; filename="product-gallery-'
+                      + str(index + 1)
+                      + '.jpg"\r\n'
+                      + "Content-Type: "
+                      + item["content_type"]
+                      + "\r\n\r\n"
+                  ).encode()
+              )
+              body.extend(item["bytes"])
+              body.extend(b"\r\n")
+
+          body.extend(("--" + boundary + "--\r\n").encode())
+
+          telegram_url = (
+              "https://api.telegram.org/bot"
+              + BOT_TOKEN
+              + "/sendMediaGroup"
+          )
+
+          request = urllib.request.Request(
+              telegram_url,
+              data=bytes(body),
+              headers={
+                  "Content-Type": "multipart/form-data; boundary=" + boundary
+              },
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  telegram_result = json.loads(
+                      response.read().decode("utf-8")
+                  )
+          except urllib.error.HTTPError as error:
+              details = error.read().decode("utf-8", errors="replace")
+              print("Telegram HTTP status:", error.code)
+              print("Telegram response:", details[:1500])
+              raise SystemExit("ERROR: Telegram album upload failed.")
+
+          if not telegram_result.get("ok"):
+              print("Telegram response:", str(telegram_result)[:1500])
+              raise SystemExit("ERROR: Telegram rejected the album.")
+
+          messages = telegram_result.get("result", [])
+          if len(messages) != 3 or any(
+              not item.get("message_id") for item in messages
+          ):
+              raise SystemExit(
+                  "ERROR: Telegram did not confirm all three album images."
+              )
+
+          print("SUCCESS: Three product gallery images published as an album.")
+          print("Product URL:", product_url)
+          print("Telegram message IDs:", [m["message_id"] for m in messages])
+          PY
