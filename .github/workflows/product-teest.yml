@@ -1,1 +1,547 @@
+name: Topat Katooni Product Gallery Album
+on:
+  workflow_dispatch:
 
+jobs:
+  publish-product:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: python -m pip install --quiet Pillow
+
+      - name: Select product and publish gallery album
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import json
+          import html
+          import hashlib
+          import urllib.request
+          import urllib.parse
+          import urllib.error
+          import xml.etree.ElementTree as ET
+          import uuid
+          from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+          from io import BytesIO
+          from PIL import Image
+
+          BASE = "https://topatkatooni.ir"
+          SITEMAP = BASE + "/product-sitemap.xml"
+          BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
+          CHAT_ID = os.environ["TELEGRAM_CHANNEL_ID"].strip()
+          RUN_NUMBER = max(1, int(os.environ.get("RUN_NUMBER", "1")))
+
+          if not BOT_TOKEN or not CHAT_ID:
+              raise SystemExit("ERROR: Telegram secrets are missing.")
+
+          def fetch(url, timeout=45):
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "User-Agent": (
+                          "Mozilla/5.0 (X11; Linux x86_64) "
+                          "AppleWebKit/537.36 Chrome/130 Safari/537.36"
+                      )
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=timeout) as response:
+                  return response.read(), response.headers
+
+          def fetch_text(url):
+              data, _ = fetch(url)
+              return data.decode("utf-8", errors="replace")
+
+          def clean_text(value):
+              if not value:
+                  return ""
+              value = html.unescape(str(value))
+              value = re.sub(
+                  r"<(script|style)\b.*?</\1>",
+                  " ",
+                  value,
+                  flags=re.I | re.S,
+              )
+              value = re.sub(r"<[^>]+>", " ", value)
+              return re.sub(r"\s+", " ", value).strip()
+
+          def get_meta(page, name):
+              patterns = [
+                  r'<meta[^>]+(?:property|name)=["\']'
+                  + re.escape(name)
+                  + r'["\'][^>]+content=["\']([^"\']*)',
+                  r'<meta[^>]+content=["\']([^"\']*)["\'][^>]+'
+                  + r'(?:property|name)=["\']'
+                  + re.escape(name)
+                  + r'["\']',
+              ]
+              for pattern in patterns:
+                  match = re.search(pattern, page, re.I | re.S)
+                  if match:
+                      return html.unescape(match.group(1)).strip()
+              return ""
+
+          def find_products(obj):
+              if isinstance(obj, dict):
+                  types = obj.get("@type", [])
+                  if isinstance(types, str):
+                      types = [types]
+                  if "Product" in types:
+                      yield obj
+                  for value in obj.values():
+                      yield from find_products(value)
+              elif isinstance(obj, list):
+                  for value in obj:
+                      yield from find_products(value)
+
+          def extract_products(page):
+              products = []
+              pattern = (
+                  r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>'
+                  r'(.*?)</script>'
+              )
+              for match in re.finditer(pattern, page, re.I | re.S):
+                  try:
+                      products.extend(find_products(json.loads(match.group(1))))
+                  except (json.JSONDecodeError, TypeError):
+                      pass
+              return productsdef image_values(value):
+              if isinstance(value, str):
+                  return [value]
+              if isinstance(value, list):
+                  result = []
+                  for item in value:
+                      result.extend(image_values(item))
+                  return result
+              if isinstance(value, dict):
+                  result = []
+                  for key in ("url", "contentUrl", "@id"):
+                      if value.get(key):
+                          result.extend(image_values(value[key]))
+                  return result
+              return []
+
+          def get_attr(tag, name):
+              match = re.search(
+                  r'\b' + re.escape(name) + r'\s*=\s*["\']([^"\']+)["\']',
+                  tag,
+                  re.I | re.S,
+              )
+              return html.unescape(match.group(1).strip()) if match else ""
+
+          def normalize_url(url, page_url):
+              url = urllib.parse.urljoin(page_url, html.unescape(url.strip()))
+              parsed = urllib.parse.urlparse(url)
+              path = re.sub(
+                  r"-\d{2,4}x\d{2,4}(?=\.(?:jpe?g|png|webp|avif)$)",
+                  "",
+                  parsed.path,
+                  flags=re.I,
+              )
+              return urllib.parse.urlunparse(parsed._replace(path=path))
+
+          print("Step 1: Reading the product sitemap.")
+          root = ET.fromstring(fetch_text(SITEMAP))
+          ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+
+          urls = [
+              node.text.strip()
+              for node in root.findall(".//sm:url/sm:loc", ns)
+              if node.text
+          ]
+          child_maps = [
+              node.text.strip()
+              for node in root.findall(".//sm:sitemap/sm:loc", ns)
+              if node.text
+          ]
+
+          for child_map in child_maps:
+              child_root = ET.fromstring(fetch_text(child_map))
+              urls.extend(
+                  node.text.strip()
+                  for node in child_root.findall(".//sm:url/sm:loc", ns)
+                  if node.text
+              )
+
+          urls = list(dict.fromkeys(urls))
+          host = urllib.parse.urlparse(BASE).netloc.lower()
+          candidates = []
+
+          for url in urls:
+              parsed = urllib.parse.urlparse(url)
+              path = parsed.path.lower().rstrip("/") or "/"
+              if parsed.scheme not in ("http", "https"):
+                  continue
+              if parsed.netloc.lower() != host:
+                  continue
+              if path in ("/shop", "/cart", "/checkout", "/my-account"):
+                  continue
+              if any(
+                  marker in path + "/"
+                  for marker in (
+                      "/product-category/",
+                      "/product-tag/",
+                      "/category/",
+                      "/tag/",
+                      "/page/",
+                  )
+              ):
+                  continue
+              candidates.append(url)
+
+          if not candidates:
+              raise SystemExit("ERROR: No product URLs were found in the sitemap.")
+
+          print("Candidate URLs:", len(candidates))
+
+          # Find product pages with Product structured data.
+          valid_products = []
+          for url in candidates[:80]:
+              try:
+                  page = fetch_text(url)
+                  products = extract_products(page)
+                  if products:
+                      valid_products.append((url, page, products[0]))
+              except Exception as exc:
+                  print("Skipping page:", type(exc).__name__)
+
+          if not valid_products:
+              raise SystemExit("ERROR: No valid product pages were found.")
+
+          # Rotate through the verified products using the workflow run number.
+          selected_index = (RUN_NUMBER - 1) % len(valid_products)
+          product_url, page, product = valid_products[selected_index]
+
+          print(
+              "Selected product",
+              selected_index + 1,
+              "of",
+              len(valid_products),)
+          print("Product URL:", product_url)
+
+          title = clean_text(
+              product.get("name")
+              or get_meta(page, "og:title")
+              or "محصول توپات کتونی"
+          )
+
+          # Read images listed in Product data.
+          image_candidates = []
+          for image_url in image_values(product.get("image")):
+              image_candidates.append(
+                  (200, normalize_url(image_url, product_url))
+              )
+
+          # Add the page's main image as a candidate.
+          og_image = get_meta(page, "og:image")
+          if og_image:
+              image_candidates.append(
+                  (100, normalize_url(og_image, product_url))
+              )
+
+          # Find image URLs in the product gallery HTML.
+          gallery_match = re.search(
+              r'<div[^>]+class=["\'][^"\']*woocommerce-product-gallery'
+              r'[^"\']*["\'][^>]*>',
+              page,
+              re.I,
+          )
+          gallery_html = (
+              page[gallery_match.start():]
+              if gallery_match
+              else page
+          )
+          gallery_html = gallery_html[:200000]
+
+          for tag in re.findall(r'<(?:img|source)\b[^>]*>', gallery_html, re.I | re.S):
+              classes = get_attr(tag, "class").lower()
+              large = (
+                  get_attr(tag, "data-large_image")
+                  or get_attr(tag, "data-src")
+                  or get_attr(tag, "data-original")
+              )
+              srcset = get_attr(tag, "data-srcset") or get_attr(tag, "srcset")
+              src = get_attr(tag, "src")
+              is_gallery = (
+                  "woocommerce-product-gallery" in classes
+                  or "wp-post-image" in classes
+                  or bool(large)
+              )
+
+              if large:
+                  image_candidates.append(
+                      (
+                          300 if is_gallery else 150,
+                          normalize_url(large, product_url),
+                      )
+                  )
+
+              if srcset:
+                  entries = []
+                  for entry in srcset.split(","):
+                      bits = entry.strip().split()
+                      if not bits:
+                          continue
+                      width_match = re.search(
+                          r"(\d+)w$",
+                          bits[1] if len(bits) > 1 else "",
+                      )
+                      width = int(width_match.group(1)) if width_match else 0
+                      entries.append((width, bits[0]))
+                  if entries:
+                      width, best_url = max(entries)
+                      image_candidates.append(
+                          (
+                              250 + min(width, 5000) // 100,
+                              normalize_url(best_url, product_url),
+                          )
+                      )
+
+              if src:
+                  score = 150 if is_gallery else 50
+                  if re.search(r"-\d{2,4}x\d{2,4}(?=\.)", src, re.I):
+                      score -= 40
+                  image_candidates.append(
+                      (score, normalize_url(src, product_url))
+                  )
+
+          # Keep only valid image URL candidates and sort by preference.
+          scored = {}
+          for score, url in image_candidates:
+              parsed = urllib.parse.urlparse(url)
+              if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                  continue
+              if not re.search(
+                  r"\.(jpe?g|png|webp|avif)(?:$|\?)",
+                  parsed.path,
+                  re.I,
+              ):
+                  continue
+              scored[url] = max(score, scored.get(url, -1))
+
+          ranked_images = sorted(
+              scored.items(),
+              key=lambda item: item[1],
+              reverse=True,
+          )
+
+          # Download three distinct, readable gallery images.
+          gallery_images = []
+          seen_hashes = set()
+
+          for image_url, score in ranked_images:if len(gallery_images) == 3:
+                  break
+              try:
+                  image_bytes, headers = fetch(image_url, timeout=60)
+                  content_type = headers.get(
+                      "Content-Type", ""
+                  ).split(";")[0].lower()
+
+                  if (
+                      not image_bytes
+                      or not content_type.startswith("image/")
+                      or len(image_bytes) > 10 * 1024 * 1024
+                  ):
+                      continue
+
+                  digest = hashlib.sha256(image_bytes).hexdigest()
+                  if digest in seen_hashes:
+                      continue
+
+                  with Image.open(BytesIO(image_bytes)) as check_image:
+                      check_image.verify()
+
+                  seen_hashes.add(digest)
+                  gallery_images.append(
+                      {
+                          "url": image_url,
+                          "bytes": image_bytes,
+                          "content_type": content_type,
+                      }
+                  )
+                  print(
+                      "Downloaded image",
+                      len(gallery_images),
+                      "of 3",
+                  )
+              except Exception as exc:
+                  print("Skipping gallery image:", type(exc).__name__)
+
+          if len(gallery_images) < 3:
+              raise SystemExit(
+                  "ERROR: Found fewer than three distinct usable images. "
+                  "Nothing was published."
+              )
+
+          print("Product title:", title)
+
+          # Read price and currency from Product structured data.
+          offers = product.get("offers", {})
+
+          if isinstance(offers, list):
+              offers = offers[0] if offers else {}
+
+          if (
+              isinstance(offers, dict)
+              and isinstance(offers.get("offers"), list)
+          ):
+              offers = offers["offers"][0] if offers["offers"] else {}
+
+          raw_price = (
+              offers.get("price")
+              if isinstance(offers, dict)
+              else None
+          )
+
+          currency = (
+              offers.get("priceCurrency", "")
+              if isinstance(offers, dict)
+              else ""
+          ).upper()
+
+          price = None
+
+          if raw_price is not None:
+              try:
+                  price = Decimal(str(raw_price))
+              except InvalidOperation:
+                  price = None
+
+          # Convert prices to Toman when the currency is known.
+          def to_toman(value, currency_code):
+              if currency_code == "IRR":
+                  return value / Decimal("10")
+              if currency_code in ("IRT", "TMN", "TOM", "TOMAN"):
+                  return value
+              return None
+
+          def format_amount(value):
+              rounded = value.quantize(
+                  Decimal("1"),
+                  rounding=ROUND_HALF_UP
+              )
+              return f"{int(rounded):,}".replace(",", "٬")
+
+          toman_price = None
+          installment = None
+
+          if price is not None:
+              toman_price = to_toman(price, currency)
+
+              if toman_price is not None:
+                  installment = toman_price / Decimal("4")
+                  print("Product price in Toman:", toman_price)
+                  print("Each installment in Toman:", installment)
+              else:
+                  print(
+                      "WARNING: Unknown currency; price will not be "
+                      "converted or displayed as Toman."
+                  )
+          else:
+              print("WARNING: Structured product price was not found.")
+
+          # Extract only sizes whose WooCommerce variation is actually in stock.
+          available_sizes = set()
+          variation_data_found = False
+
+          def size_from_value(value):
+              if value is None:
+                  return None
+              text = html.unescape(str(value)).strip()
+              match = re.fullmatch(r"(3[5-9]|4[0-6])(?:\.0)?", text)
+              return int(match.group(1)) if match else None
+
+          # WooCommerce commonly exposes variation stock in this attribute.
+          variation_match = re.search(
+              r"""data-product_variations\s*=\s*(["'])(.*?)\1""",
+              page,
+              re.I | re.S,
+          )
+
+          if variation_match:
+              raw_variations = html.unescape(variation_match.group(2)).strip()
+              if raw_variations and raw_variations.lower() != "false":
+                  try:
+                      variations = json.loads(raw_variations)
+                  except (json.JSONDecodeError, TypeError):
+                      variations = None
+
+                  if isinstance(variations, list):
+                      variation_data_found = True
+                      for variation in variations:
+                          if not isinstance(variation, dict):
+                              continue
+                          if variation.get("is_in_stock") is not True:
+                              continue
+                          if variation.get("is_purchasable") is False:
+                              continue
+
+                          attributes = variation.get("attributes", {})
+                          if not isinstance(attributes, dict):
+                              continue
+
+                          for key, value in attributes.items():
+                              normalized_key = str(key).lower()
+                              if "size" not in normalized_key:
+                                  continue
+
+                              parsed_size = size_from_value(value)
+                              if parsed_size is not None:
+                                  available_sizes.add(parsed_size)
+
+          # Fallback: inspect size selectors only when variation data is absent.
+          if not variation_data_found:
+              option_pattern = re.compile(
+                  r"<option\b([^>]*)>(.*?)</option>",
+                  re.I | re.S,
+              )
+              size_select_pattern = re.compile(
+                  r"<select\b([^>]*)>(.*?)</select>",
+                  re.I | re.S,
+              )
+
+              for select_attrs, select_body in size_select_pattern.findall(page):
+                  if not re.search(
+                      r"size|pa_size|attribute_pa_size",
+                      select_attrs,
+                      re.I,
+                  ):
+                      continue
+
+                  for option_attrs, option_label in option_pattern.findall(select_body):
+                      option_tag = "<option " + option_attrs + ">"
+                      parsed_size = size_from_value(get_attr(option_tag, "value"))
+
+                      if parsed_size is None:
+                          parsed_size = size_from_value(clean_text(option_label))
+
+                      if parsed_size is None:
+                          continue
+
+                      disabled = bool(
+                          re.search(r"\bdisabled(?:\s|=|$)", option_attrs, re.I)
+                      )
+                      out_of_stock = bool(
+                          re.search(
+                              r"out[-_ ]?of[-_ ]?stock|unavailable|ناموجود",
+                              option_attrs + " " + option_label,
+                              re.I,
+                          )
+                      )
+
+                      if not disabled and not out_of_stock:
+                          available_sizes.add(parsed_size)
+
+          if available_sizes:
+              size_text = "، ".join(
+                  str(value) for value in sorted(available_sizes)
+              )
+              size_line =
