@@ -18,7 +18,7 @@ payload = {
             "role": "system",
             "content": (
                 "تو نویسنده فارسی فروشگاه کتونی توپات کتونی هستی. "
-                "فقط یک متن فارسی کوتاه و طبیعی بنویس. "
+                "فقط متن فارسی کوتاه، طبیعی و روان بنویس. "
                 "هیچ قیمت یا مشخصات محصولی را جعل نکن."
             )
         },
@@ -27,7 +27,7 @@ payload = {
             "content": (
                 "یک رشته‌توییت آزمایشی شامل 3 توییت کوتاه درباره "
                 "اشتباه رایج در انتخاب سایز کتونی بنویس. "
-                "این فقط آزمایش است و نباید محصول یا قیمت فرضی معرفی کنی."
+                "محصول یا قیمت فرضی معرفی نکن."
             )
         }
     ],
@@ -40,7 +40,8 @@ request = urllib.request.Request(
     data=json.dumps(payload).encode("utf-8"),
     headers={
         "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "User-Agent": "TopatKatooni-Automation/1.0"
     },
     method="POST"
 )
@@ -51,13 +52,20 @@ try:
 
     print("CONNECTION: SUCCESS")
     print("MODEL:", result.get("model", "unknown"))
-    print("USAGE:", json.dumps(result.get("usage", {}), ensure_ascii=False))
+    print(
+        "USAGE:",
+        json.dumps(result.get("usage", {}), ensure_ascii=False)
+    )
     print("OUTPUT:")
     print(result["choices"][0]["message"]["content"])
 
 except urllib.error.HTTPError as error:
     print("API ERROR:", error.code)
-    print(error.read().decode("utf-8")[:1500])
+
+    details = error.read().decode("utf-8", errors="replace")
+    print("ERROR DETAILS:")
+    print(details[:2000])
+
     raise SystemExit(1)
 
 except Exception as error:
